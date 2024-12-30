@@ -2,8 +2,9 @@
 import { initializeApp } from "firebase/app";
 import { getAuth } from "firebase/auth";
 import { getStorage } from "firebase/storage";
-import { getFirestore } from "firebase/firestore";
 import { useEffect, useState, doc, onSnapshot, getDownloadURL, ref } from "firebase/firestore";
+import { getDatabase } from 'firebase/database';
+
 
 
 // Firebase configuration
@@ -22,7 +23,7 @@ const app = initializeApp(firebaseConfig);
 // Initialize Firebase services
 export const auth = getAuth(app); // For authentication
 export const storage = getStorage(app); // For file storage
-export const firestore = getFirestore(app); // For Firestore database
+export const database = getDatabase(app);
 
 // Default export (optional if needed elsewhere)
 export default app;

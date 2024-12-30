@@ -6,14 +6,19 @@
     "@headlessui/react": "^1.7.17",
     "@heroicons/react": "^2.0.18",
     "@react-google-maps/api": "^2.20.3",
+    "@tensorflow-models/coco-ssd": "^2.2.3",
+    "@tensorflow-models/mobilenet": "^2.1.1",
+    "@tensorflow/tfjs": "^4.22.0",
+    "@tensorflow/tfjs-backend-webgl": "^4.22.0",
+    "@tensorflow/tfjs-converter": "^4.22.0",
     "firebase": "^10.7.1",
+    "lodash": "^4.17.21",
+    "lucide-react": "^0.263.1",
     "react": "^18.2.0",
     "react-dom": "^18.2.0",
     "react-router-dom": "^6.21.0",
     "react-scripts": "5.0.1",
-    "web-vitals": "^3.5.0",
-    "lucide-react": "^0.263.1",
-    "lodash": "^4.17.21"
+    "web-vitals": "^3.5.0"
   },
   "scripts": {
     "start": "react-scripts start",
