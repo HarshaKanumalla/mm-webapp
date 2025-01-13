@@ -277,7 +277,7 @@ export const Dashboard = () => {
     { icon: dataCenter, label: "MM Ads", path: "/ads" },
     { icon: dashboard, label: "Monitoring", path: "/monitoring" },
     { icon: notification, label: "Notifications", path: "/notifications" },
-    { icon: tasks, label: "Access", path: "/access" }
+    { icon: tasks, label: "Chatbot", path: "/chatbot" }
   ], []);
 
   // Verify authentication status

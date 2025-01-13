@@ -1,13 +1,10 @@
-import React, { useRef, useState, useEffect } from "react";
+import React, { useRef, useState, useEffect, useCallback } from "react";
 import { useNavigate } from "react-router-dom";
 import { getAuth, signOut } from "firebase/auth";
-import { getDatabase, ref as dbRef, set, onChildAdded, onValue, update } from "firebase/database";
-import { getStorage, ref as storageRef, listAll, getDownloadURL } from "firebase/storage";
-import * as tf from '@tensorflow/tfjs';
-import '@tensorflow/tfjs-backend-webgl';
-import * as mobilenet from '@tensorflow-models/mobilenet';
+import { getDatabase, ref as dbRef, onValue, get, set } from "firebase/database";
+import { getStorage, ref as storageRef, getDownloadURL, listAll } from "firebase/storage";
 
-// Import all necessary images
+// Image imports
 import dashboard from "./dashboard.png";
 import dataCenter from "./data-center.png";
 import futures from "./futures.png";
@@ -20,443 +17,14 @@ import openParcel from "./open-parcel.png";
 import boxImportant from "./box-important.png";
 
 // Constants
+const TIME_WINDOW = 5 * 60 * 1000; // 5 minutes
 const DEFAULT_IMAGE = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAACklEQVR4nGMAAQAABQABDQottAAAAABJRU5ErkJggg==';
-const DETECTION_THRESHOLD = 0.7;
-const MODEL_CONFIG = {
-  version: 2,
-  alpha: 1.0,
-  inputSize: { width: 224, height: 224 },
-  quantBytes: 4
-};
 
-// Advanced AI Detection System
-class AIObjectDetector {
-  constructor() {
-    this.model = null;
-    this.isInitialized = false;
-    this.processingQueue = new Map();
-    
-    // Comprehensive item categories and labels
-    this.itemCategories = {
-      bags: {
-        labels: ['backpack', 'bag', 'handbag', 'suitcase', 'briefcase', 'duffel', 'luggage'],
-        confidence: 0.75
-      },
-      electronics: {
-        labels: ['laptop', 'computer', 'mobile phone', 'camera', 'tablet', 'phone', 'electronic device'],
-        confidence: 0.8
-      },
-      documents: {
-        labels: ['book', 'document', 'folder', 'paper', 'notebook', 'magazine'],
-        confidence: 0.7
-      },
-      personal_items: {
-        labels: ['wallet', 'purse', 'umbrella', 'watch', 'glasses', 'keys'],
-        confidence: 0.75
-      },
-      containers: {
-        labels: ['bottle', 'container', 'box', 'package', 'carton'],
-        confidence: 0.65
-      }
-    };
-
-    // Enhanced label mapping for better accuracy
-    this.labelMap = {
-      'laptop computer': 'Laptop',
-      'notebook computer': 'Laptop',
-      'cellular telephone': 'Mobile Phone',
-      'mobile phone': 'Mobile Phone',
-      'cellphone': 'Mobile Phone',
-      'hand bag': 'Handbag',
-      'brief case': 'Briefcase',
-      'back pack': 'Backpack',
-      'shopping bag': 'Bag',
-      'plastic bag': 'Bag',
-      'paper bag': 'Bag',
-      'carrying case': 'Bag',
-      'suit case': 'Suitcase',
-      'traveling bag': 'Suitcase',
-      'document holder': 'Document',
-      'folder': 'Document',
-      'container': 'Container',
-      'package': 'Package',
-      'box': 'Box',
-      'carton': 'Box'
-    };
-  }
-
-  async initialize() {
-    if (this.isInitialized) {
-      return true;
-    }
-
-    try {
-      await tf.setBackend('webgl');
-      await tf.ready();
-      console.log('TensorFlow.js initialized successfully');
-
-      this.model = await mobilenet.load();
-      console.log('MobileNet model loaded successfully');
-
-      this.isInitialized = true;
-      return true;
-    } catch (error) {
-      console.error('Model initialization error:', error);
-      this.isInitialized = false;
-      return false;
-    }
-  }
-
-  preprocessImage(imageElement) {
-    return tf.tidy(() => {
-      console.log('Starting image preprocessing');
-      
-      // Basic input validation
-      if (!imageElement.complete) {
-        throw new Error('Image not fully loaded');
-      }
-
-      // Create tensor from image and log shape
-      const tensor = tf.browser.fromPixels(imageElement);
-      console.log('Original tensor shape:', tensor.shape);
-
-      // Resize to model's expected size (224x224)
-      const resized = tf.image.resizeBilinear(tensor, [224, 224]);
-      console.log('Resized tensor shape:', resized.shape);
-
-      // Normalize values to [-1, 1] range
-      const normalized = resized.toFloat().div(tf.scalar(127.5)).sub(tf.scalar(1));
-      console.log('Normalized tensor stats:', {
-        shape: normalized.shape,
-        dtype: normalized.dtype
-      });
-
-      // Add batch dimension
-      const batched = normalized.expandDims(0);
-      console.log('Final tensor shape:', batched.shape);
-
-      return batched;
-    });
-  }
-  
-  async detectObjects(imageElement) {
-    if (!this.isInitialized || !this.model) {
-      throw new Error('AI Object Detector not initialized');
-    }
-    
-    let imageTensor = null;
-    try {
-      // Log image properties for debugging
-      console.log('Image properties:', {
-        width: imageElement.naturalWidth,
-        height: imageElement.naturalHeight,
-        complete: imageElement.complete,
-        crossOrigin: imageElement.crossOrigin
-      });
-
-      imageTensor = this.preprocessImage(imageElement);
-
-      // Perform classification with lower threshold for testing
-      const predictions = await this.model.classify(imageTensor, {
-        topk: 5,
-        threshold: 0.05
-      });
-
-      console.log('Raw predictions from model:', predictions);
-
-      if (!predictions || predictions.length === 0) {
-        return {
-          success: false,
-          message: 'No predictions detected',
-          detections: null
-        };
-      } 
-
-      // Process and enhance predictions
-      const enhancedPredictions = this.enhanceDetections(predictions);
-      console.log('Enhanced predictions:', enhancedPredictions);
-      
-      // Ensure we have valid enhanced predictions
-      if (!enhancedPredictions || enhancedPredictions.length === 0) {
-        console.log('No valid enhanced predictions');
-        return {
-          success: false,
-          message: 'No valid predictions after enhancement',
-          detections: null
-        };
-      }
-
-      // Sort predictions by confidence and apply additional filtering
-      const finalPredictions = this.filterAndRankPredictions(enhancedPredictions);
-      console.log('Final filtered predictions:', finalPredictions);
-
-      // Ensure we have at least one valid prediction after filtering
-      if (!finalPredictions || finalPredictions.length === 0) {
-        console.log('No predictions passed confidence threshold');
-        return {
-          success: false,
-          message: 'No predictions met confidence threshold',
-          detections: null
-        };
-      }
-
-      // Create properly structured detection result
-      const detectionResult = {
-        success: true,
-        detections: {
-          primaryObject: {
-            originalLabel: finalPredictions[0].originalLabel,
-            confidence: finalPredictions[0].confidence,
-            category: finalPredictions[0].category
-          },
-          allObjects: finalPredictions.map(pred => ({
-            originalLabel: pred.originalLabel,
-            confidence: pred.confidence,
-            category: pred.category
-          })),
-          timestamp: Date.now(),
-          metadata: {
-            modelVersion: MODEL_CONFIG.version,
-            threshold: DETECTION_THRESHOLD,
-            processingTime: Date.now()
-          }
-        }
-      };
-
-      // Log successful detection
-      console.log('Detection completed successfully:', detectionResult);
-      
-      return detectionResult;
-
-  } catch (error) {
-      console.error('Detailed error during object detection:', {
-        message: error.message,
-        stack: error.stack
-      });
-      return {
-        success: false,
-        message: error.message,
-        detections: null
-      };
-    } finally {
-      if (imageTensor) {
-        imageTensor.dispose();
-      }
-    }
-  }
-
-  enhanceDetections(predictions) {
-    if (!Array.isArray(predictions)) {
-      console.error('Invalid predictions array received');
-      return [];
-    }
-
-    return predictions.map(prediction => {
-      if (!prediction || !prediction.className) {
-        console.warn('Invalid prediction object encountered');
-        return null;
-      }
-
-      const normalizedLabel = prediction.className.toLowerCase();
-      const category = this.categorizeItem(normalizedLabel);
-      const enhancedLabel = this.enhanceLabel(prediction.className);
-      
-      return {
-        originalLabel: enhancedLabel || 'Unknown Object',
-        category: category.name || 'other',
-        confidence: Math.round((prediction.probability || 0) * 100),
-        threshold: category.confidence || DETECTION_THRESHOLD,
-        metadata: {
-          rawScore: prediction.probability || 0,
-          modelName: 'MobileNet',
-          originalLabel: prediction.className || 'unknown'
-        }
-      };
-    }).filter(Boolean); // Remove any null entries
-  }
-
-  enhanceDetections(predictions) {
-    return predictions.map(prediction => {
-      const normalizedLabel = prediction.className.toLowerCase();
-      const category = this.categorizeItem(normalizedLabel);
-      const enhancedLabel = this.enhanceLabel(prediction.className);
-      
-      return {
-        originalLabel: enhancedLabel,
-        category: category.name,
-        confidence: Math.round(prediction.probability * 100),
-        threshold: category.confidence,
-        metadata: {
-          rawScore: prediction.probability,
-          modelName: 'MobileNet',
-          originalLabel: prediction.className
-        }
-      };
-    });
-  }
-
-  filterAndRankPredictions(predictions) {
-    return predictions
-      .filter(pred => {
-        const categoryThreshold = this.getCategoryThreshold(pred.category);
-        return (pred.confidence / 100) >= categoryThreshold;
-      })
-      .sort((a, b) => b.confidence - a.confidence)
-      .map(pred => ({
-        ...pred,
-        confidence: Math.min(Math.round(pred.confidence * 1.2), 100) // Slight confidence boost for matched categories
-      }));
-  }
-
-  categorizeItem(label) {
-    for (const [categoryName, category] of Object.entries(this.itemCategories)) {
-      if (category.labels.some(itemLabel => label.includes(itemLabel))) {
-        return {
-          name: categoryName,
-          confidence: category.confidence
-        };
-      }
-    }
-    return {
-      name: 'other',
-      confidence: DETECTION_THRESHOLD
-    };
-  }
-
-  getCategoryThreshold(category) {
-    return this.itemCategories[category]?.confidence || DETECTION_THRESHOLD;
-  }
-
-  enhanceLabel(label) {
-    const normalizedLabel = label.toLowerCase();
-    return this.labelMap[normalizedLabel] || label;
-  }
-}
-
-// Enhanced CameraImageCell Component with Advanced Detection Integration
-const CameraImageCell = React.memo(({ 
-  item, 
-  detector, 
-  selectedBox, 
-  index, 
-  detectedObjects, 
-  handleImageClick, 
-  formatTimestamp,
-  updateDetectionInFirebase 
-}) => {
-  const [detectionDetails, setDetectionDetails] = useState(null);
-  const [detectionStatus, setDetectionStatus] = useState('pending');
-  const hasProcessed = useRef(false);
-  const processingTimeout = useRef(null);
-
-  useEffect(() => {
-    const detectObjects = async () => {
-      if (!hasProcessed.current && detector && item.cameraImage !== "-") {
-        hasProcessed.current = true;
-        setDetectionStatus('processing');
-    
-        try {
-          const img = new Image();
-          img.crossOrigin = "anonymous";
-          
-          await new Promise((resolve, reject) => {
-            img.onload = () => {
-              console.log('Image loaded successfully:', {
-                width: img.naturalWidth,
-                height: img.naturalHeight,
-                complete: img.complete
-              });
-              resolve();
-            };
-            img.onerror = (error) => {
-              console.error('Image load error:', error);
-              reject(new Error('Failed to load image'));
-            };
-            img.src = item.cameraImage;
-          });
-    
-          // Ensure image is fully loaded before processing
-          if (!img.complete || !img.naturalWidth) {
-            throw new Error('Image failed to load properly');
-          }
-    
-          const result = await detector.detectObjects(img);
-          
-          if (result?.success && result?.detections) {
-            setDetectionDetails(result.detections);
-            setDetectionStatus('completed');
-            
-            if (updateDetectionInFirebase) {
-              await updateDetectionInFirebase(
-                selectedBox,
-                item.timestamp,
-                result.detections
-              );
-            }
-          } else {
-            console.error('Detection failed:', result?.message);
-            setDetectionStatus('failed');
-          }
-        } catch (error) {
-          console.error('Detection process error:', error);
-          setDetectionStatus('error');
-        }
-      }
-    };
-
-    detectObjects();
-
-    // Cleanup function
-    return () => {
-      if (processingTimeout.current) {
-        clearTimeout(processingTimeout.current);
-      }
-    };
-  }, [detector, item.cameraImage, selectedBox, item.timestamp, updateDetectionInFirebase]);
-
-  // Handle case when no image is present
+// Camera Image Cell Component
+const CameraImageCell = React.memo(({ item, handleImageClick, formatTimestamp }) => {
   if (item.cameraImage === "-") {
     return <span className="text-[#858080]">-</span>;
   }
-
-  const imageId = `${selectedBox}-${index}`;
-  const detection = detectedObjects[imageId] || detectionDetails;
-
-  // Render detection status and results
-  const renderDetectionInfo = () => {
-    if (detection?.primaryObject) {
-      return (
-        <div className="text-xs">
-          <span className="text-[#339265]">
-            {detection.primaryObject.originalLabel} ({detection.primaryObject.confidence}%)
-          </span>
-          {detection.allObjects?.length > 1 && (
-            <span className="text-[#858080] mt-1 block">
-              +{detection.allObjects.length - 1} more items
-            </span>
-          )}
-          <span className="text-[#858080] text-xs block">
-            {detection.primaryObject.category}
-          </span>
-        </div>
-      );
-    }
-
-    // Show different messages based on detection status
-    const statusMessages = {
-      pending: "Waiting to process...",
-      processing: "Analyzing image...",
-      timeout: "Detection timed out",
-      failed: "Detection failed",
-      error: "Error processing image"
-    };
-
-    return (
-      <span className="text-xs text-[#858080]">
-        {statusMessages[detectionStatus] || "Processing..."}
-      </span>
-    );
-  };
 
   return (
     <div className="flex flex-col items-center">
@@ -468,17 +36,9 @@ const CameraImageCell = React.memo(({
             className="w-10 h-10 rounded-md object-cover cursor-pointer"
             onClick={() => handleImageClick(item.cameraImage)}
           />
-          {detectionStatus === 'processing' && (
-            <div className="absolute inset-0 flex items-center justify-center bg-black bg-opacity-50 rounded-md">
-              <div className="w-5 h-5 border-2 border-white border-t-transparent rounded-full animate-spin"></div>
-            </div>
-          )}
         </div>
         <div className="flex flex-col ml-2">
-          <span className="text-sm text-[#858080]">
-            {formatTimestamp(item.timestamp)}
-          </span>
-          {renderDetectionInfo()}
+          <span className="text-sm text-[#858080]">{formatTimestamp(item.timestamp)}</span>
         </div>
       </div>
     </div>
@@ -487,282 +47,446 @@ const CameraImageCell = React.memo(({
 
 CameraImageCell.displayName = 'CameraImageCell';
 
-// Firebase Integration Helper Functions
-const saveRowToCompleteData = async (boxId, rowData, detectedObjects = {}) => {
-  try {
-    const db = getDatabase();
-    const timestamp = rowData.timestamp;
-    const formattedTimestamp = timestamp.replace(/[.[\]#$/]/g, '_');
-    const path = `Complete_data/${boxId}/${formattedTimestamp}`;
-
-    const imageId = `${boxId}-${rowData.timestamp}`;
-    const detectedItem = detectedObjects[imageId];
-
-    const dataToSave = {
-      box_ID: boxId,
-      timestamp: timestamp,
-      camera_image: rowData.cameraImage || "-",
-      form_image: rowData.formImageUrl || "-",
-      status: rowData.status || "UNCLAIMED",
-      detected_item: detectedItem ? {
-        primary_object: {
-          label: detectedItem.primaryObject.originalLabel,
-          confidence: detectedItem.primaryObject.confidence,
-          category: detectedItem.primaryObject.category
-        },
-        all_objects: detectedItem.allObjects,
-        detection_timestamp: detectedItem.timestamp,
-        metadata: detectedItem.metadata
-      } : null,
-      additional_details: {
-        name: rowData.Name || "-",
-        phone_number: rowData["Phone number"] || "-",
-        item_description: rowData["Please describe the item"] || "-",
-        box_id: rowData["Please enter the box ID you're putting the item in?"] || boxId,
-        item_type: rowData["What is the item?"] || "-",
-        item_location: rowData["Where did you find the item?"] || "-"
-      }
-    };
-
-    await set(dbRef(db, path), dataToSave);
-    return true;
-  } catch (error) {
-    console.error("Error saving row:", error);
-    return false;
-  }
-};
-
 export const Monitoring = () => {
   const navigate = useNavigate();
   const auth = getAuth();
   const db = getDatabase();
   const storage = getStorage();
-  const activeBoxRef = useRef(null);
   const scrollContainerRef = useRef(null);
 
   // State Management
   const [selectedBox, setSelectedBox] = useState(1506);
   const [popUpImage, setPopUpImage] = useState(null);
   const [showDetailsBox, setShowDetailsBox] = useState(false);
-  const [activeRow, setActiveRow] = useState(0);
+  const [activeRow, setActiveRow] = useState(null);
   const [boxDetails, setBoxDetails] = useState({});
-  const [processedEvents] = useState(new Set());
   const [isLoading, setIsLoading] = useState(true);
-  const [detector, setDetector] = useState(null);
-  const [detectedObjects, setDetectedObjects] = useState({});
 
-  // Initialize AI Detector
-  useEffect(() => {
-    const initializeDetector = async () => {
-      try {
-        const aiDetector = new AIObjectDetector();
-        const initialized = await aiDetector.initialize();
-        if (initialized) {
-          setDetector(aiDetector);
-          console.log('AI Detector initialized successfully');
-        } else {
-          console.error('Failed to initialize AI Detector');
-        }
-      } catch (error) {
-        console.error('Error during detector initialization:', error);
-      }
-    };
-
-    initializeDetector();
+  // Utility Functions
+  const isWithinTimeWindow = useCallback((timestamp1, timestamp2) => {
+    if (!timestamp1 || !timestamp2) return false;
+    const date1 = new Date(timestamp1).getTime();
+    const date2 = new Date(timestamp2).getTime();
+    return Math.abs(date1 - date2) <= TIME_WINDOW;
   }, []);
 
-  // Firebase Integration Functions
-  const updateDetectionInFirebase = async (boxId, timestamp, detectionResult) => {
+  const parseTimestamp = useCallback((timestampStr) => {
     try {
-      // First, validate that we have the required data
-      if (!detectionResult || !detectionResult.primaryObject) {
-        console.log('No valid detection results to update in Firebase');
-        return;
-      }
-  
-      const formattedTimestamp = timestamp.replace(/[.[\]#$/]/g, '_');
-      const path = `Complete_data/${boxId}/${formattedTimestamp}/detected_item`;
-  
-      // Create a safe version of the detection data
-      const detectionData = {
-        primary_object: {
-          label: detectionResult.primaryObject?.originalLabel || 'Unknown',
-          confidence: detectionResult.primaryObject?.confidence || 0,
-          category: detectionResult.primaryObject?.category || 'unknown'
-        },
-        all_objects: Array.isArray(detectionResult.allObjects) 
-          ? detectionResult.allObjects.map(obj => ({
-              label: obj?.originalLabel || 'Unknown',
-              confidence: obj?.confidence || 0,
-              category: obj?.category || 'unknown'
-            }))
-          : [],
-        detection_timestamp: detectionResult.timestamp || Date.now(),
-        metadata: {
-          modelVersion: detectionResult.metadata?.modelVersion || '',
-          threshold: detectionResult.metadata?.threshold || 0,
-          processingTime: detectionResult.metadata?.processingTime || Date.now()
-        }
-      };
-  
-      // Update Firebase with the validated data
-      const db = getDatabase();
-      await update(dbRef(db, path), detectionData);
-      console.log('Detection data successfully updated in Firebase');
-    } catch (error) {
-      console.error('Error updating Firebase with detection:', error);
-    }
-  };
+      if (!timestampStr) return null;
 
-  const handleDoorStatusChange = async (boxId, status) => {
-    if (status === 'door_open') {
-      const numericBoxId = parseInt(boxId);
-      activeBoxRef.current = numericBoxId;
-      setSelectedBox(numericBoxId);
-      setActiveRow(0);
-
-      setBoxDetails(prevDetails => {
-        const updatedDetails = { ...prevDetails };
-        if (!updatedDetails[boxId]) {
-          updatedDetails[boxId] = { middleContent: [] };
-        }
-
-        const timestamp = new Date().toISOString();
-        const newEntry = {
-          timestamp,
-          cameraImage: "-",
-          formImageUrl: "-",
-          Name: "-",
-          "Phone number": "-",
-          "Please describe the item": "-",
-          "Please enter the box ID you're putting the item in?": boxId,
-          "What is the item?": "-",
-          "Where did you find the item?": "-",
-          status: "UNCLAIMED",
-          bottomActions: {
-            doorOpened: true,
-            imageCaptured: false,
-            sentToCloud: false,
-            qrDisplayed: false,
-            formSubmitted: false
-          }
-        };
-
-        const recentEntryIndex = updatedDetails[boxId].middleContent.findIndex(
-          entry => isTimestampInRange(entry.timestamp, timestamp)
-        );
-
-        if (recentEntryIndex !== -1) {
-          updatedDetails[boxId].middleContent[recentEntryIndex].bottomActions.doorOpened = true;
-          saveRowToCompleteData(boxId, updatedDetails[boxId].middleContent[recentEntryIndex]);
-        } else {
-          updatedDetails[boxId].middleContent.push(newEntry);
-          saveRowToCompleteData(boxId, newEntry);
-        }
-
-        return updatedDetails;
-      });
-    }
-  };
-
-  const fetchCameraImages = async (storage, boxId) => {
-    try {
-      const imagesRef = storageRef(storage, 'missingmatters_photos/Camera_Images/');
-      const imagesList = await listAll(imagesRef);
-      const cameraImages = new Set();
-
-      for (const item of imagesList.items) {
-        const fileName = item.name;
-        if (fileName.startsWith(`HN ${boxId}`)) {
-          const imageId = `${boxId}-${fileName}`;
-          if (!processedEvents.has(imageId)) {
-            try {
-              const timestampMatch = fileName.match(/(?:\d{4}-?\d{2}-?\d{2})T\d{6}\.\d{3}Z/);
-              const timestamp = timestampMatch ? timestampMatch[0] : null;
-
-              if (timestamp) {
-                const imageUrl = await getDownloadURL(item);
-                cameraImages.add(JSON.stringify({
-                  timestamp,
-                  cameraImage: imageUrl,
-                  fileName,
-                  id: imageId
-                }));
-                processedEvents.add(imageId);
-              }
-            } catch (error) {
-              console.error(`Error processing image ${fileName}:`, error);
-            }
-          }
-        }
-      }
-
-      return Array.from(cameraImages).map(jsonStr => JSON.parse(jsonStr));
-    } catch (error) {
-      console.error("Error fetching camera images:", error);
-      return [];
-    }
-  };
-
-  // Time and Format Utilities
-  const parseTimestamp = (timestampStr) => {
-    try {
-      let reformattedTimestamp = timestampStr;
       if (timestampStr.match(/^\d{8}T\d{6}\.\d{3}Z$/)) {
-        reformattedTimestamp = timestampStr.replace(
-          /(\d{4})(\d{2})(\d{2})T(\d{2})(\d{2})(\d{2})\.(\d{3})Z$/,
-          "$1-$2-$3T$4:$5:$6.$7Z"
-        );
-      } else {
-        reformattedTimestamp = timestampStr.replace(
-          /T(\d{2})(\d{2})(\d{2})\.(\d{3})Z$/,
-          "T$1:$2:$3.$4Z"
-        );
+        const year = timestampStr.substring(0, 4);
+        const month = timestampStr.substring(4, 6);
+        const day = timestampStr.substring(6, 8);
+        const hour = timestampStr.substring(9, 11);
+        const minute = timestampStr.substring(11, 13);
+        const second = timestampStr.substring(13, 15);
+        const ms = timestampStr.substring(16, 19);
+        timestampStr = `${year}-${month}-${day}T${hour}:${minute}:${second}.${ms}Z`;
       }
 
-      const parsedTimestamp = new Date(reformattedTimestamp);
-      if (isNaN(parsedTimestamp.getTime())) {
-        console.error("Invalid timestamp format:", timestampStr);
-        return null;
-      }
-      return parsedTimestamp;
+      const parsedTimestamp = new Date(timestampStr);
+      return isNaN(parsedTimestamp.getTime()) ? null : parsedTimestamp;
     } catch (error) {
-      console.error(`Timestamp Parsing Error: ${error.message}`, timestampStr);
+      console.error('Timestamp parsing error:', error);
       return null;
     }
-  };
+  }, []);
 
-  const formatTimestamp = (timestamp) => {
+  const formatTimestamp = useCallback((timestamp) => {
     if (!timestamp) return '-';
     const parsedDate = parseTimestamp(timestamp);
     if (!parsedDate) return '-';
+    
     try {
-      return parsedDate.toLocaleString('en-US', {
+      return new Intl.DateTimeFormat('en-US', {
         hour: 'numeric',
         minute: 'numeric',
         hour12: true,
         day: 'numeric',
-        month: 'short'
-      });
+        month: 'short',
+        timeZone: 'UTC'
+      }).format(parsedDate);
     } catch (error) {
       console.error('Error formatting timestamp:', error);
       return '-';
     }
-  };
+  }, [parseTimestamp]);
 
-  const isTimestampInRange = (timestamp1, timestamp2, logDetails = false) => {
-    if (!timestamp1 || !timestamp2) return false;
-    
-    const date1 = parseTimestamp(timestamp1);
-    const date2 = parseTimestamp(timestamp2);
-    
-    if (!date1 || !date2) return false;
-    
-    const timeDiffMs = Math.abs(date1.getTime() - date2.getTime());
-    const TIMESTAMP_WINDOW_MS = 2 * 60 * 1000; // 2 minutes window
+// Update the handleDoorOpen function
+const handleDoorOpen = useCallback((boxId, doorData) => {
+  console.log(`[Door Monitor] Creating row for Box ${boxId}`);
+  setSelectedBox(parseInt(boxId));
+  
+  setBoxDetails(prevDetails => {
+    const updatedDetails = { ...prevDetails };
+    if (!updatedDetails[boxId]) {
+      updatedDetails[boxId] = { middleContent: [] };
+    }
 
-    return timeDiffMs <= TIMESTAMP_WINDOW_MS;
-  };
+    const existingRowIndex = updatedDetails[boxId].middleContent.findIndex(row => 
+      isWithinTimeWindow(row.timestamp, doorData.timestamp)
+    );
+
+    if (existingRowIndex !== -1) {
+      console.log(`[Door Monitor] Row already exists for this event`);
+      return prevDetails;
+    }
+
+    const newRow = {
+      timestamp: doorData.timestamp,
+      cameraImage: "-",
+      formImageUrl: "-",
+      Name: "-",
+      "Phone number": "-",
+      "Please describe the item": "-",
+      "Please enter the box ID you're putting the item in?": boxId,
+      "What is the item?": "-",
+      "Where did you find the item?": "-",
+      status: "UNCLAIMED",
+      bottomActions: {
+        doorOpened: true,
+        imageCaptured: false,
+        sentToCloud: false,
+        qrDisplayed: false,
+        formSubmitted: false
+      }
+    };
+
+    console.log(`[Door Monitor] Adding new row with timestamp: ${doorData.timestamp}`);
+    updatedDetails[boxId].middleContent.unshift(newRow);
+    
+    // Ensure the new row is selected
+    setTimeout(() => {
+      setActiveRow(0);
+    }, 0);
+    
+    return updatedDetails;
+  });
+}, [isWithinTimeWindow]);
+
+  const checkForNewImage = useCallback(async (boxId, doorTimestamp, retryCount = 0, maxRetries = 30) => {
+    console.log(`[Camera Monitor] Checking for new image (attempt ${retryCount + 1}/${maxRetries})`);
+    
+    try {
+      const imageRef = storageRef(storage, 'missingmatters_photos/Camera_Images');
+      const files = await listAll(imageRef);
+      
+      console.log(`[Camera Monitor] Found ${files.items.length} files in storage`);
+      
+      const boxImages = files.items.filter(item => item.name.startsWith(`HN ${boxId}_`));
+      console.log(`[Camera Monitor] Found ${boxImages.length} images for Box ${boxId}`);
+      
+      if (boxImages.length > 0) {
+        // Parse door timestamp
+        const doorTime = new Date(doorTimestamp).getTime();
+        
+        // Find images within the 5-minute window after door opened
+        const relevantImages = boxImages.filter(image => {
+          const imageTimeStr = image.name.split('_')[1].replace('.jpg', '');
+          // Convert format like "20250111T160329.000Z" to "2025-01-11T16:03:29.000Z"
+          const formattedImageTime = imageTimeStr.replace(
+            /(\d{4})(\d{2})(\d{2})T(\d{2})(\d{2})(\d{2})\.(\d{3})Z/,
+            '$1-$2-$3T$4:$5:$6.$7Z'
+          );
+          const imageTime = new Date(formattedImageTime).getTime();
+          return imageTime >= doorTime && imageTime <= doorTime + TIME_WINDOW;
+        });
+        
+        if (relevantImages.length === 0) {
+          console.log(`[Camera Monitor] No images found within 5-minute window after door opened at ${doorTimestamp}`);
+          if (retryCount < maxRetries) {
+            setTimeout(() => {
+              checkForNewImage(boxId, doorTimestamp, retryCount + 1, maxRetries);
+            }, 10000);
+          }
+          return false;
+        }
+        
+        // Sort relevant images by timestamp
+        const sortedImages = relevantImages.sort((a, b) => {
+          const timeA = a.name.split('_')[1].replace('.jpg', '');
+          const timeB = b.name.split('_')[1].replace('.jpg', '');
+          return timeB.localeCompare(timeA);
+        });
+
+        const mostRecent = sortedImages[0];
+        console.log(`[Camera Monitor] Found relevant image: ${mostRecent.name}`);
+        
+        const imageTimestamp = mostRecent.name.split('_')[1].replace('.jpg', '');
+        console.log(`[Camera Monitor] Image timestamp: ${imageTimestamp}, Door timestamp: ${doorTimestamp}`);
+
+        const imageUrl = await getDownloadURL(mostRecent);
+        
+        setBoxDetails(prevDetails => {
+          const updatedDetails = { ...prevDetails };
+          const boxContent = updatedDetails[boxId]?.middleContent;
+          
+          if (!boxContent?.length) return prevDetails;
+
+          // Find the most recent row that matches our criteria
+          const targetRowIndex = boxContent.findIndex(row => {
+            // Parse both timestamps to milliseconds for comparison
+            const rowTime = new Date(row.timestamp).getTime();
+            const doorTime = new Date(doorTimestamp).getTime();
+            
+            return row.bottomActions.doorOpened && 
+                   row.cameraImage === "-" &&
+                   Math.abs(rowTime - doorTime) < 60000; // Allow 1-minute difference
+          });
+          
+          if (targetRowIndex !== -1) {
+            console.log(`[Camera Monitor] Successfully updating row ${targetRowIndex} with new image`);
+            console.log(`[Camera Monitor] Row timestamp: ${boxContent[targetRowIndex].timestamp}`);
+            updatedDetails[boxId].middleContent[targetRowIndex].cameraImage = imageUrl;
+            updatedDetails[boxId].middleContent[targetRowIndex].bottomActions.imageCaptured = true;
+            updatedDetails[boxId].middleContent[targetRowIndex].bottomActions.sentToCloud = true;
+            setActiveRow(targetRowIndex);
+
+            // Save to Complete_data in Firebase
+            try {
+              const safeTimestamp = boxContent[targetRowIndex].timestamp.replace(/[.]/g, '_');
+              const completeDataRef = dbRef(db, `Complete_data/${boxId}/${safeTimestamp}`);
+              set(completeDataRef, {
+                box_ID: boxId,
+                camera_image: imageUrl,
+                timestamp: boxContent[targetRowIndex].timestamp,
+                status: "UNCLAIMED"
+              });
+            } catch (error) {
+              console.error('[Camera Monitor] Error saving to Firebase:', error);
+            }
+          } else {
+            console.log(`[Camera Monitor] No matching row found for timestamp ${doorTimestamp}`);
+          }
+          
+          return updatedDetails;
+        });
+        
+        return true;
+      } else {
+        console.log(`[Camera Monitor] No matching images found yet`);
+        
+        if (retryCount < maxRetries) {
+          setTimeout(() => {
+            checkForNewImage(boxId, doorTimestamp, retryCount + 1, maxRetries);
+          }, 10000);
+        } else {
+          console.log(`[Camera Monitor] Exceeded maximum retry attempts`);
+        }
+        
+        return false;
+      }
+    } catch (error) {
+      console.error('[Camera Monitor] Error checking for new image:', error);
+      console.error('Error details:', error.message);
+      return false;
+    }
+  }, [storage, db]);
+
+  // Update QR Status
+  const updateQRStatus = useCallback((boxId, timestamp) => {
+    console.log(`[Door Monitor] Updating QR displayed status for Box ${boxId}`);
+    setBoxDetails(prevDetails => {
+      const updatedDetails = { ...prevDetails };
+      const boxContent = updatedDetails[boxId]?.middleContent;
+      
+      if (!boxContent?.length) return prevDetails;
+      
+      const targetRowIndex = boxContent.findIndex(row => 
+        row.bottomActions.doorOpened && 
+        isWithinTimeWindow(row.timestamp, timestamp)
+      );
+      
+      if (targetRowIndex !== -1) {
+        updatedDetails[boxId].middleContent[targetRowIndex].bottomActions.qrDisplayed = true;
+        console.log(`[Door Monitor] QR displayed status updated for Box ${boxId}`);
+      }
+      
+      return updatedDetails;
+    });
+  }, [isWithinTimeWindow]);
+
+  // Door Status Monitoring
+  const monitorDoorStatus = useCallback((boxId) => {
+    console.log(`[Door Monitor] Starting monitoring for Box ${boxId}`);
+    const doorStatusRef = dbRef(db, `devices/HN ${boxId}/door_status`);
+    
+    return onValue(doorStatusRef, async (snapshot) => {
+      if (!snapshot.exists()) return;
+      
+      const statusData = snapshot.val();
+      const entries = Object.entries(statusData).sort((a, b) => {
+        const timeA = new Date(a[1].timestamp).getTime();
+        const timeB = new Date(b[1].timestamp).getTime();
+        return timeB - timeA;
+      });
+      
+      const [latestKey, data] = entries[0];
+      
+      if (data.door_status === "door_open") {
+        console.log(`[Door Monitor] Door open event detected for Box ${boxId}`);
+        handleDoorOpen(boxId, {
+          timestamp: data.timestamp,
+          device_name: data.device_name
+        });
+      } else if (data.door_status === "door_closed") {
+        console.log(`[Door Monitor] Door closed event detected for Box ${boxId}`);
+        
+        setBoxDetails(prevDetails => {
+          const updatedDetails = { ...prevDetails };
+          const boxContent = updatedDetails[boxId]?.middleContent;
+          
+          if (!boxContent?.length) return prevDetails;
+          
+          const targetRowIndex = boxContent.findIndex(row => 
+            row.bottomActions.doorOpened && 
+            row.cameraImage === "-"
+          );
+          
+          if (targetRowIndex !== -1) {
+            updatedDetails[boxId].middleContent[targetRowIndex].bottomActions.imageCaptured = true;
+          }
+          
+          return updatedDetails;
+        });
+        
+        checkForNewImage(boxId, data.timestamp);
+        setTimeout(() => updateQRStatus(boxId, data.timestamp), 6000);
+      }
+    });
+  }, [db, handleDoorOpen, checkForNewImage, updateQRStatus]);
+
+
+// Additional Details Monitoring
+const checkAndUpdateClaimStatus = useCallback(async (itemDescription) => {
+  if (!itemDescription || itemDescription === "-") return "UNCLAIMED";
+  
+  try {
+    const lostReportsRef = dbRef(db, 'lost_reports');
+    const snapshot = await get(lostReportsRef);
+    const lostReports = snapshot.val();
+    
+    if (!lostReports) return "UNCLAIMED";
+
+    const isMatched = Object.values(lostReports).some(report => {
+      const reportDesc = report.description.toLowerCase().trim();
+      const itemDesc = itemDescription.toLowerCase().trim();
+      return reportDesc.includes(itemDesc) || itemDesc.includes(reportDesc);
+    });
+    
+    console.log(`[Claim Status] Item "${itemDescription}" matched: ${isMatched}`);
+    return isMatched ? "CLAIMED" : "UNCLAIMED";
+  } catch (error) {
+    console.error("Error checking lost reports:", error);
+    return "UNCLAIMED";
+  }
+}, [db]);
+
+const monitorAdditionalDetails = useCallback((boxId) => {
+  console.log(`[Form Monitor] Starting monitoring for Box ${boxId}`);
+  const responsesRef = dbRef(db, 'responses');
+  
+  return onValue(responsesRef, async (snapshot) => {
+    const responses = snapshot.val();
+    if (!responses) return;
+
+    setBoxDetails(prevDetails => {
+      const updatedDetails = { ...prevDetails };
+      const boxContent = updatedDetails[boxId]?.middleContent;
+      if (!boxContent?.length) return prevDetails;
+
+      boxContent.forEach(async (row, rowIndex) => {
+        const doorOpenTime = new Date(row.timestamp).getTime();
+        const endWindow = doorOpenTime + TIME_WINDOW;
+        const now = Date.now();
+
+        if (now <= endWindow) {
+          const relevantResponses = Object.values(responses).filter(data => {
+            if (data["Please enter the box ID you're putting the item in?"] !== boxId) return false;
+
+            const formDate = new Date(data.timestamp);
+            formDate.setHours(formDate.getHours() + 5);
+            formDate.setMinutes(formDate.getMinutes() + 30);
+            const formTime = formDate.getTime();
+
+            return formTime >= doorOpenTime && formTime <= endWindow;
+          });
+
+          if (relevantResponses.length > 0 && !row.bottomActions.formSubmitted) {
+            const mostRecent = relevantResponses[relevantResponses.length - 1];
+            console.log(`[Form Monitor] Processing form submission for timestamp: ${row.timestamp}`);
+
+            const formData = {
+              name: mostRecent.Name || "-",
+              phone: mostRecent["Phone number"] || "-",
+              item_description: mostRecent["Please describe the item"] || "-",
+              item_type: mostRecent["What is the item?"] || "-",
+              location: mostRecent["Where did you find the item?"] || "-"
+            };
+
+            let processedFormImageUrl = mostRecent.formImageUrl || "-";
+            if (processedFormImageUrl && processedFormImageUrl.includes('drive.google.com')) {
+              const matches = processedFormImageUrl.match(/\/d\/(.*?)\/|id=(.*?)(&|$)/);
+              const fileId = matches ? (matches[1] || matches[2]) : null;
+              if (fileId) {
+                processedFormImageUrl = `https://drive.google.com/uc?id=${fileId}`;
+              }
+            }
+
+            // Get claim status
+            const claimStatus = await checkAndUpdateClaimStatus(formData.item_description);
+
+            // Update the row immediately
+            updatedDetails[boxId].middleContent[rowIndex] = {
+              ...row,
+              Name: formData.name,
+              "Phone number": formData.phone,
+              "Please describe the item": formData.item_description,
+              "What is the item?": formData.item_type,
+              "Where did you find the item?": formData.location,
+              status: claimStatus,
+              formImageUrl: processedFormImageUrl,
+              bottomActions: {
+                ...row.bottomActions,
+                formSubmitted: true,
+                qrDisplayed: true
+              }
+            };
+
+            // Force immediate UI update for the active row
+            if (activeRow === rowIndex) {
+              setActiveRow(rowIndex);
+            }
+
+            // Save to Firebase
+            try {
+              const safeTimestamp = row.timestamp.replace(/[.]/g, '_');
+              const completeDataRef = dbRef(db, `Complete_data/${boxId}/${safeTimestamp}`);
+              
+              const firebaseData = {
+                box_ID: boxId,
+                camera_image: row.cameraImage || "-",
+                form_image: processedFormImageUrl || "-",
+                status: claimStatus || "UNCLAIMED",
+                timestamp: row.timestamp,
+                additional_details: formData
+              };
+
+              await set(completeDataRef, firebaseData);
+              console.log('[Form Monitor] Form data saved successfully');
+            } catch (error) {
+              console.error('[Form Monitor] Error saving form data:', error);
+            }
+          }
+        }
+      });
+
+      return updatedDetails;
+    });
+  });
+}, [db, checkAndUpdateClaimStatus, TIME_WINDOW, activeRow]);
+
 
   // Event Handlers
   const handleScrollLeft = () => {
@@ -782,9 +506,25 @@ export const Monitoring = () => {
     setActiveRow(0);
   };
 
-  const handleRowClick = (rowIndex) => {
-    setActiveRow(rowIndex);
-  };
+// Modify row click handler to prevent changing selection during process
+const handleRowClick = (rowIndex) => {
+  const currentRow = boxDetails[selectedBox]?.middleContent[rowIndex];
+  if (currentRow) {
+    const isProcessComplete = 
+      currentRow.bottomActions.doorOpened &&
+      currentRow.bottomActions.imageCaptured &&
+      currentRow.bottomActions.sentToCloud &&
+      currentRow.bottomActions.qrDisplayed &&
+      currentRow.bottomActions.formSubmitted;
+      
+    // Only allow changing selection if process is complete
+    if (isProcessComplete || activeRow === null) {
+      setActiveRow(rowIndex);
+    } else {
+      console.log('[Row Selection] Cannot change selection - process incomplete');
+    }
+  }
+};
 
   const handleLogout = () => {
     signOut(auth)
@@ -816,223 +556,134 @@ export const Monitoring = () => {
     setShowDetailsBox(false);
   };
 
-  // Firebase Listeners Setup
-  useEffect(() => {
-    let isSubscribed = true;
-    const unsubscribers = [];
-    setIsLoading(true);
+// Setup Effects
+useEffect(() => {
+  const unsubscribers = [];
+  setIsLoading(true);
 
-    const setupListeners = async () => {
-      try {
-        const boxIds = ['1506', '1507'];
+  const setupMonitoring = async () => {
+    try {
+      // First load saved data
+      const completeDataRef = dbRef(db, 'Complete_data');
+      const snapshot = await get(completeDataRef);
+      const savedData = snapshot.val();
+      
+      if (savedData) {
+        const processedData = {};
+        Object.entries(savedData).forEach(([boxId, boxData]) => {
+          processedData[boxId] = { middleContent: [] };
+          
+          Object.entries(boxData).forEach(([timestamp, data]) => {
+            const row = {
+              timestamp: data.timestamp,
+              cameraImage: data.camera_image || "-",
+              formImageUrl: data.form_image || "-",
+              Name: data.additional_details?.name || "-",
+              "Phone number": data.additional_details?.phone || "-",
+              "Please describe the item": data.additional_details?.item_description || "-",
+              "What is the item?": data.additional_details?.item_type || "-",
+              "Where did you find the item?": data.additional_details?.location || "-",
+              "Please enter the box ID you're putting the item in?": boxId,
+              status: data.status || "UNCLAIMED",
+              bottomActions: {
+                doorOpened: true,
+                imageCaptured: data.camera_image !== "-",
+                sentToCloud: data.camera_image !== "-",
+                qrDisplayed: true,
+                formSubmitted: data.additional_details?.name !== "-" || data.form_image !== "-"
+              }
+            };
+            processedData[boxId].middleContent.push(row);
+          });
+          
+          processedData[boxId].middleContent.sort((a, b) => 
+            new Date(b.timestamp) - new Date(a.timestamp)
+          );
+        });
         
-        // Door status listeners
-        boxIds.forEach(boxId => {
-          const doorStatusRef = dbRef(db, `devices/${boxId}/door_status`);
-          const unsubscribe = onValue(doorStatusRef, (snapshot) => {
-            if (isSubscribed) {
-              const status = snapshot.val();
-              handleDoorStatusChange(boxId, status);
-            }
-          });
-          unsubscribers.push(unsubscribe);
-        });
-
-        // Door events listener
-        const doorEventsRef = dbRef(db, 'door_events');
-        const doorUnsubscribe = onChildAdded(doorEventsRef, (snapshot) => {
-          const eventId = `door-${snapshot.key}`;
-          if (!processedEvents.has(eventId) && isSubscribed) {
-            const data = snapshot.val();
-            if (data.boxId === String(selectedBox)) {
-              setBoxDetails(prevDetails => {
-                const updatedDetails = { ...prevDetails };
-                if (!updatedDetails[selectedBox]) {
-                  updatedDetails[selectedBox] = { middleContent: [] };
-                }
-
-                const boxContent = updatedDetails[selectedBox].middleContent;
-                const recentEntryIndex = boxContent.findIndex(
-                  entry => isTimestampInRange(entry.timestamp, data.timestamp)
-                );
-
-                if (recentEntryIndex !== -1) {
-                  boxContent[recentEntryIndex].bottomActions.doorOpened = true;
-                  saveRowToCompleteData(selectedBox, boxContent[recentEntryIndex]);
-                } else {
-                  const newEntry = {
-                    timestamp: data.timestamp,
-                    cameraImage: "-",
-                    formImageUrl: "-",
-                    Name: "-",
-                    "Phone number": "-",
-                    "Please describe the item": "-",
-                    "Please enter the box ID you're putting the item in?": selectedBox,
-                    "What is the item?": "-",
-                    "Where did you find the item?": "-",
-                    status: "UNCLAIMED",
-                    bottomActions: {
-                      doorOpened: true,
-                      imageCaptured: false,
-                      sentToCloud: false,
-                      qrDisplayed: false,
-                      formSubmitted: false
-                    }
-                  };
-                  boxContent.push(newEntry);
-                  saveRowToCompleteData(selectedBox, newEntry);
-                }
-                return updatedDetails;
-              });
-              processedEvents.add(eventId);
-            }
-          }
-        });
-        unsubscribers.push(doorUnsubscribe);
-
-        // Form responses listener
-        const responsesRef = dbRef(db, 'responses');
-        const responseUnsubscribe = onChildAdded(responsesRef, (snapshot) => {
-          const eventId = `response-${snapshot.key}`;
-          if (!processedEvents.has(eventId) && isSubscribed) {
-            const data = snapshot.val();
-            if (data["Please enter the box ID you're putting the item in?"] === String(selectedBox)) {
-              setBoxDetails(prevDetails => {
-                const updatedDetails = { ...prevDetails };
-                if (!updatedDetails[selectedBox]) {
-                  updatedDetails[selectedBox] = { middleContent: [] };
-                }
-                
-                const boxContent = updatedDetails[selectedBox].middleContent;
-                const matchingEntryIndex = boxContent.findIndex(entry => 
-                  isTimestampInRange(entry.timestamp, data.timestamp)
-                );
-
-                if (matchingEntryIndex !== -1) {
-                  boxContent[matchingEntryIndex] = {
-                    ...boxContent[matchingEntryIndex],
-                    ...data,
-                    bottomActions: {
-                      ...boxContent[matchingEntryIndex].bottomActions,
-                      qrDisplayed: true,
-                      formSubmitted: true
-                    }
-                  };
-                  saveRowToCompleteData(selectedBox, boxContent[matchingEntryIndex]);
-                } else {
-                  const newEntry = {
-                    ...data,
-                    cameraImage: "-",
-                    status: "UNCLAIMED",
-                    bottomActions: {
-                      doorOpened: false,
-                      imageCaptured: false,
-                      sentToCloud: false,
-                      qrDisplayed: true,
-                      formSubmitted: true
-                    }
-                  };
-                  boxContent.push(newEntry);
-                  saveRowToCompleteData(selectedBox, newEntry);
-                }
-                return updatedDetails;
-              });
-              processedEvents.add(eventId);
-            }
-          }
-        });
-        unsubscribers.push(responseUnsubscribe);
-
-        // Fetch and process camera images
-        const cameraImages = await fetchCameraImages(storage, selectedBox);
-        if (isSubscribed) {
-          cameraImages.forEach(imageData => {
-            setBoxDetails(prevDetails => {
-              const updatedDetails = { ...prevDetails };
-              if (!updatedDetails[selectedBox]) {
-                updatedDetails[selectedBox] = { middleContent: [] };
-              }
-
-              const boxContent = updatedDetails[selectedBox].middleContent;
-              const matchingEntryIndex = boxContent.findIndex(entry => 
-                entry.bottomActions.doorOpened && 
-                isTimestampInRange(entry.timestamp, imageData.timestamp)
-              );
-
-              if (matchingEntryIndex !== -1) {
-                boxContent[matchingEntryIndex].cameraImage = imageData.cameraImage
-                boxContent[matchingEntryIndex].bottomActions = {
-                  ...boxContent[matchingEntryIndex].bottomActions,
-                  imageCaptured: true,
-                  sentToCloud: true
-                };
-                saveRowToCompleteData(selectedBox, boxContent[matchingEntryIndex]);
-              } else {
-                const emptyImageEntryIndex = boxContent.findIndex(entry => 
-                  entry.cameraImage === "-" && 
-                  isTimestampInRange(entry.timestamp, imageData.timestamp)
-                );
-
-                if (emptyImageEntryIndex !== -1) {
-                  boxContent[emptyImageEntryIndex].cameraImage = imageData.cameraImage;
-                  boxContent[emptyImageEntryIndex].bottomActions = {
-                    ...boxContent[emptyImageEntryIndex].bottomActions,
-                    imageCaptured: true,
-                    sentToCloud: true
-                  };
-                  saveRowToCompleteData(selectedBox, boxContent[emptyImageEntryIndex]);
-                } else {
-                  const newEntry = {
-                    timestamp: imageData.timestamp,
-                    cameraImage: imageData.cameraImage,
-                    formImageUrl: "-",
-                    Name: "-",
-                    "Phone number": "-",
-                    "Please describe the item": "-",
-                    "Please enter the box ID you're putting the item in?": selectedBox,
-                    "What is the item?": "-",
-                    "Where did you find the item?": "-",
-                    status: "UNCLAIMED",
-                    bottomActions: {
-                      doorOpened: false,
-                      imageCaptured: true,
-                      sentToCloud: true,
-                      qrDisplayed: false,
-                      formSubmitted: false
-                    }
-                  };
-                  boxContent.push(newEntry);
-                  saveRowToCompleteData(selectedBox, newEntry);
-                }
-              }
-              return updatedDetails;
-            });
-          });
-        }
-
-        setIsLoading(false);
-      } catch (error) {
-        console.error("Error setting up listeners:", error);
-        if (isSubscribed) {
-          setIsLoading(false);
-        }
+        setBoxDetails(processedData);
       }
-    };
 
-    setupListeners();
+      // Then set up real-time monitoring
+      const boxIds = ['1506', '1507'];
+      boxIds.forEach(boxId => {
+        unsubscribers.push(
+          monitorDoorStatus(boxId),
+          monitorAdditionalDetails(boxId)
+        );
+      });
 
-    return () => {
-      isSubscribed = false;
-      unsubscribers.forEach(unsubscribe => unsubscribe());
-    };
-  }, [selectedBox, db, storage]);
+    } catch (error) {
+      console.error('Failed to setup monitoring:', error);
+    } finally {
+      setIsLoading(false);
+    }
+  };
 
-  // Initial box selection
-  useEffect(() => {
-    setSelectedBox(1506);
-  }, []);
+  setupMonitoring();
 
-  // Main render
+  return () => {
+    console.log('Removing listeners and subscriptions');
+    unsubscribers.forEach(unsubscribe => unsubscribe());
+  };
+}, [db, monitorDoorStatus, monitorAdditionalDetails]);
+
+// Initialize selected box
+useEffect(() => {
+  setSelectedBox(1506);
+}, []);
+
+  // Render Methods
+  const renderBottomContainer = () => {
+    const selectedRow = activeRow !== null && boxDetails[selectedBox]?.middleContent[activeRow];
+    
+    return (
+      <div className="bg-[#1E1E1E] border border-[#2E2E2E] rounded-[25px] h-[125px] mx-10 mt-6">
+        <div className="flex items-center justify-evenly h-full px-10">
+          {[
+            { key: 'doorOpened', label: 'Door Opened' },
+            { key: 'imageCaptured', label: 'Image Captured' },
+            { key: 'sentToCloud', label: 'Sent to Cloud' },
+            { key: 'qrDisplayed', label: 'QR displayed' },
+            { key: 'formSubmitted', label: 'Form Submitted' }
+          ].map(({ key, label }) => {
+            const isActive = selectedRow?.bottomActions?.[key] || false;
+            
+            return (
+              <div key={key} className="flex flex-col items-center">
+                <div
+                  className={`w-8 h-8 rounded-full border-2 flex items-center justify-center ${
+                    isActive ? "border-[#339265]" : "border-[#D9D9D9]"
+                  }`}
+                >
+                  {isActive && (
+                    <svg 
+                      xmlns="http://www.w3.org/2000/svg" 
+                      viewBox="0 0 24 24" 
+                      fill="none" 
+                      stroke="#339265" 
+                      strokeWidth="3" 
+                      strokeLinecap="round" 
+                      strokeLinejoin="round" 
+                      className="w-6 h-6"
+                    >
+                      <polyline points="20 6 9 17 4 12" />
+                    </svg>
+                  )}
+                </div>
+                <p className="text-[#858080] mt-2 font-montserrat text-base font-normal">
+                  {label}
+                </p>
+              </div>
+            );
+          })}
+        </div>
+      </div>
+    );
+  };
+
+
+  // Main Render
   return (
     <div className="flex flex-col h-screen bg-[#D9D9D9] text-white">
       {/* Sidebar */}
@@ -1078,7 +729,8 @@ export const Monitoring = () => {
               className="w-8 h-8 hover:opacity-80 cursor-pointer"
               onClick={handleLogout}
             />
-          </div>
+
+</div>
         </div>
 
         {/* Main Content Area */}
@@ -1116,56 +768,7 @@ export const Monitoring = () => {
           </div>
 
           {/* Bottom Container - Action Status */}
-          <div className="bg-[#1E1E1E] border border-[#2E2E2E] rounded-[25px] h-[125px] mx-10 mt-6">
-            <div className="flex items-center justify-evenly h-full px-10">
-              {[
-                { key: 'doorOpened', label: 'Door Opened' },
-                { key: 'imageCaptured', label: 'Image Captured' },
-                { key: 'sentToCloud', label: 'Sent to Cloud' },
-                { key: 'qrDisplayed', label: 'QR displayed' },
-                { key: 'formSubmitted', label: 'Form Submitted' }
-              ].map(({ key, label }) => {
-                const isActive = selectedBox && 
-                  activeRow !== null && 
-                  boxDetails[selectedBox]?.middleContent[activeRow]?.bottomActions?.[key];
-                
-                return (
-                  <div key={key} className="flex flex-col items-center">
-                    <div
-                      className={`w-8 h-8 rounded-full border-2 flex items-center justify-center ${
-                        isActive ? "border-[#339265]" : "border-[#D9D9D9]"
-                      }`}
-                    >
-                      {isActive && (
-                        <svg 
-                          xmlns="http://www.w3.org/2000/svg" 
-                          viewBox="0 0 24 24" 
-                          fill="none" 
-                          stroke="#339265" 
-                          strokeWidth="3" 
-                          strokeLinecap="round" 
-                          strokeLinejoin="round" 
-                          className="w-6 h-6"
-                        >
-                          <polyline points="20 6 9 17 4 12" />
-                        </svg>
-                      )}
-                    </div>
-                    <p 
-                      className="text-[#858080] mt-2"
-                      style={{ 
-                        fontFamily: 'Montserrat, sans-serif',
-                        fontSize: '16px',
-                        fontWeight: '400'
-                      }}
-                    >
-                      {label}
-                    </p>
-                  </div>
-                );
-              })}
-            </div>
-          </div>
+          {renderBottomContainer()}
 
           {/* Middle Container - Box Contents */}
           {selectedBox && (
@@ -1209,13 +812,8 @@ export const Monitoring = () => {
                     <div className="flex-1 flex items-center justify-center">
                       <CameraImageCell
                         item={item}
-                        detector={detector}
-                        selectedBox={selectedBox}
-                        index={index}
-                        detectedObjects={detectedObjects}
                         handleImageClick={handleImageClick}
                         formatTimestamp={formatTimestamp}
-                        updateDetectionInFirebase={updateDetectionInFirebase}
                       />
                     </div>
                     <div className="flex-1 flex items-center justify-center">
@@ -1300,108 +898,68 @@ export const Monitoring = () => {
           {/* Details Pop-up */}
           {showDetailsBox && (
             <div
-            className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50"
-            onClick={closePopUp}
-          >
-            <div
-              className="bg-[#1E1E1E] p-6 rounded-[25px] shadow-lg text-[#858080] w-[400px]"
-              onClick={(e) => e.stopPropagation()}
+              className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50"
+              onClick={closePopUp}
             >
-              <div className="flex justify-between items-center mb-4">
-                <h2 className="text-xl font-semibold text-white">Additional Details</h2>
-                <button 
-                  onClick={closePopUp}
-                  className="text-white hover:text-gray-300 transition-colors duration-200"
-                >
-                  <svg
-                    xmlns="http://www.w3.org/2000/svg"
-                    className="h-6 w-6"
-                    fill="none"
-                    viewBox="0 0 24 24"
-                    stroke="currentColor"
+              <div
+                className="bg-[#1E1E1E] p-6 rounded-[25px] shadow-lg text-[#858080] w-[400px]"
+                onClick={(e) => e.stopPropagation()}
+              >
+                <div className="flex justify-between items-center mb-4">
+                  <h2 className="text-xl font-semibold text-white">Additional Details</h2>
+                  <button 
+                    onClick={closePopUp}
+                    className="text-white hover:text-gray-300 transition-colors duration-200"
                   >
-                    <path
-                      strokeLinecap="round"
-                      strokeLinejoin="round"
-                      strokeWidth={2}
-                      d="M6 18L18 6M6 6l12 12"
-                    />
-                  </svg>
-                </button>
-              </div>
-              
-              {boxDetails[selectedBox]?.middleContent[activeRow] ? (
-                <div className="space-y-3">
-                  {[
-                    { label: "Name", key: "Name" },
-                    { label: "Phone Number", key: "Phone number" },
-                    { label: "Item Description", key: "Please describe the item" },
-                    { label: "Box ID", key: "Please enter the box ID you're putting the item in?" },
-                    { label: "Item Type", key: "What is the item?" },
-                    { label: "Item Location", key: "Where did you find the item?" },
-                    { label: "Timestamp", key: "timestamp", formatter: formatTimestamp }
-                  ].map(({ label, key, formatter }) => (
-                    <div key={key} className="border-b border-[#3C3B3B] pb-2">
-                      <p className="font-semibold text-white">{label}:</p>
-                      <p className="break-words">
-                        {formatter 
-                          ? formatter(boxDetails[selectedBox].middleContent[activeRow][key])
-                          : boxDetails[selectedBox].middleContent[activeRow][key] || "Not Specified"}
-                      </p>
-                    </div>
-                  ))}
-
-                  {/* AI Detection Results Section */}
-                  {boxDetails[selectedBox].middleContent[activeRow].cameraImage !== "-" && (
-                    <div className="mt-4 pt-2 border-t border-[#3C3B3B]">
-                      <p className="font-semibold text-white mb-2">AI Detection Results:</p>
-                      <div className="bg-[#2A2929] rounded-lg p-3">
-                        {detectedObjects[`${selectedBox}-${activeRow}`]?.primaryObject ? (
-                          <>
-                            <div className="mb-2">
-                              <span className="text-[#339265] font-medium">Primary Detection:</span>
-                              <p className="text-white">
-                                {detectedObjects[`${selectedBox}-${activeRow}`].primaryObject.originalLabel}
-                                {" "}
-                                <span className="text-[#858080]">
-                                  ({detectedObjects[`${selectedBox}-${activeRow}`].primaryObject.confidence}% confidence)
-                                </span>
-                              </p>
-                            </div>
-                            {detectedObjects[`${selectedBox}-${activeRow}`].allObjects?.length > 1 && (
-                              <div>
-                                <span className="text-[#339265] font-medium">Additional Detections:</span>
-                                <div className="mt-1 space-y-1">
-                                  {detectedObjects[`${selectedBox}-${activeRow}`].allObjects
-                                    .slice(1)
-                                    .map((obj, idx) => (
-                                      <p key={idx} className="text-[#858080] text-sm">
-                                        {obj.originalLabel} ({obj.confidence}%)
-                                      </p>
-                                    ))}
-                                </div>
-                              </div>
-                            )}
-                          </>
-                        ) : (
-                          <p className="text-[#858080]">No AI detection results available</p>
-                        )}
+                    <svg
+                      xmlns="http://www.w3.org/2000/svg"
+                      className="h-6 w-6"
+                      fill="none"
+                      viewBox="0 0 24 24"
+                      stroke="currentColor"
+                    >
+                      <path
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                        strokeWidth={2}
+                        d="M6 18L18 6M6 6l12 12"
+                      />
+                    </svg>
+                  </button>
+                </div>
+                
+                {boxDetails[selectedBox]?.middleContent[activeRow] ? (
+                  <div className="space-y-3">
+                    {[
+                      { label: "Name", key: "Name" },
+                      { label: "Phone Number", key: "Phone number" },
+                      { label: "Item Description", key: "Please describe the item" },
+                      { label: "Box ID", key: "Please enter the box ID you're putting the item in?" },
+                      { label: "Item Type", key: "What is the item?" },
+                      { label: "Item Location", key: "Where did you find the item?" },
+                      { label: "Timestamp", key: "timestamp", formatter: formatTimestamp }
+                    ].map(({ label, key, formatter }) => (
+                      <div key={key} className="border-b border-[#3C3B3B] pb-2">
+                        <p className="font-semibold text-white">{label}:</p>
+                        <p className="break-words">
+                          {formatter 
+                            ? formatter(boxDetails[selectedBox].middleContent[activeRow][key])
+                            : boxDetails[selectedBox].middleContent[activeRow][key] || "Not Specified"}
+                        </p>
                       </div>
-                    </div>
-                  )}
-                </div>
-              ) : (
-                <div className="flex items-center justify-center h-32">
-                  <p className="text-center text-gray-500">No details available</p>
-                </div>
-              )}
+                    ))}
+                  </div>
+                ) : (
+                  <div className="flex items-center justify-center h-32">
+                    <p className="text-center text-gray-500">No details available</p>
+                  </div>
+                )}
+              </div>
             </div>
-          </div>
-        )}
+          )}
+        </div>
       </div>
     </div>
-  </div>
-);
+  );
 };
-
 export default Monitoring;

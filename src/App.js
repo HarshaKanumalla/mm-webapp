@@ -5,6 +5,7 @@ import Login from "./screens/Login";
 import Dashboard from "./screens/Dashboard";
 import AdsScreen from "./screens/AdsScreen";
 import Monitoring from "./screens/Monitoring";
+import Chatbot from "./screens/Chatbot";
 import { auth } from "./firebase";
 
 function ProtectedRoute({ children, isAuthenticated }) {
@@ -85,6 +86,14 @@ function App() {
             </ProtectedRoute>
             }
             />
+        <Route
+          path="/chatbot"
+          element={
+            <ProtectedRoute isAuthenticated={isAuthenticated}>
+              <Chatbot />
+            </ProtectedRoute>
+          }
+        />
 
 
         
