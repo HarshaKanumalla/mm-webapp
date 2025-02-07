@@ -5,14 +5,19 @@ module.exports = {
     node: true,
   },
   extends: [
-    "eslint:recommended"
+    'eslint:recommended',
+    'plugin:promise/recommended',
   ],
-  parserOptions: {
-    ecmaVersion: 2018,
-  },
   rules: {
-    "no-case-declarations": "off",
-    indent: "off",
-    "max-len": "off"
+    'no-restricted-globals': ['error', 'name', 'length'],
+    'prefer-arrow-callback': 'error',
+    'quotes': ['error', 'single', { 'allowTemplateLiterals': true }],
+    'no-case-declarations': 'off',
+    'indent': 'off',
+    'no-unused-vars': 'warn',
+    'max-len': 'off'
+  },
+  parserOptions: {
+    ecmaVersion: 2020,  // Updated to support optional chaining
   }
 };

@@ -4,6 +4,7 @@ import { getAuth, signOut } from "firebase/auth";
 import { getDatabase, ref as dbRef, onValue, get, set } from "firebase/database";
 import { getStorage, ref as storageRef, getDownloadURL, listAll } from "firebase/storage";
 
+
 // Image imports
 import dashboard from "./dashboard.png";
 import dataCenter from "./data-center.png";
@@ -15,12 +16,146 @@ import lessThan from "./less-than.png";
 import moreThan from "./more-than.png";
 import openParcel from "./open-parcel.png";
 import boxImportant from "./box-important.png";
+import mmlogo from './mmlogo.png';
+
 
 // Constants
 const TIME_WINDOW = 5 * 60 * 1000; // 5 minutes
 const DEFAULT_IMAGE = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAACklEQVR4nGMAAQAABQABDQottAAAAABJRU5ErkJggg==';
 
-// Camera Image Cell Component
+const ImageAnalysisDisplay = React.memo(({ imageUrl, timestamp, boxId }) => {
+  const [analysisData, setAnalysisData] = useState(null);
+  const [isLoading, setIsLoading] = useState(true);
+
+  useEffect(() => {
+    let isMounted = true;
+
+    const fetchAnalysis = async () => {
+      if (!imageUrl || !timestamp || !boxId) {
+        if (isMounted) setIsLoading(false);
+        return;
+      }
+
+      try {
+        const db = getDatabase();
+        const analysisRef = dbRef(db, 'image_analysis/camera');
+        const rowTime = new Date(timestamp).getTime();
+
+        console.log('[Analysis Display] Processing row timestamp:', new Date(rowTime).toISOString());
+
+        const unsubscribe = onValue(analysisRef, (snapshot) => {
+          if (!isMounted) return;
+
+          const allAnalyses = snapshot.val();
+          if (!allAnalyses) {
+            setIsLoading(false);
+            return;
+          }
+
+          Object.entries(allAnalyses).forEach(([key, data]) => {
+            if (!data.metadata?.timestamp) return;
+
+            // Convert UTC analysis time to IST by adding 5 hours and 30 minutes
+            const analysisTimeUTC = new Date(data.metadata.timestamp).getTime();
+            const analysisTimeIST = analysisTimeUTC + (5 * 60 + 30) * 60 * 1000;
+            const timeDiff = Math.abs(analysisTimeIST - rowTime);
+
+            console.log('[Analysis Display] Comparing timestamps:', {
+              key,
+              rowTime: new Date(rowTime).toISOString(),
+              analysisTimeUTC: new Date(analysisTimeUTC).toISOString(),
+              analysisTimeIST: new Date(analysisTimeIST).toISOString(),
+              diffSeconds: Math.floor(timeDiff / 1000)
+            });
+
+            if (timeDiff < 60000) {
+              console.log('[Analysis Display] Found matching analysis for row:', {
+                key,
+                matchedTime: new Date(analysisTimeIST).toISOString()
+              });
+              setAnalysisData(data.analysis);
+            }
+          });
+          setIsLoading(false);
+        });
+
+        return () => unsubscribe();
+
+      } catch (error) {
+        console.error('[Analysis Display] Error:', error);
+        if (isMounted) setIsLoading(false);
+      }
+    };
+
+    fetchAnalysis();
+    return () => { isMounted = false; };
+  }, [imageUrl, timestamp, boxId]);
+
+  const formatResults = (data) => {
+    if (!data) return [];
+    
+    let results = [];
+    
+    if (data.text) {
+      // Split the text into chunks of 35 characters while preserving words
+      const words = data.text.split(' ');
+      let currentLine = 'Text: ';
+      let lines = [];
+      
+      words.forEach(word => {
+        if ((currentLine + word).length > 35) {
+          lines.push(currentLine.trim());
+          currentLine = word + ' ';
+        } else {
+          currentLine += word + ' ';
+        }
+      });
+      if (currentLine) {
+        lines.push(currentLine.trim());
+      }
+      
+      // Only take the first 2 lines to maintain compact display
+      results.push(...lines.slice(0, 2));
+      if (lines.length > 2) {
+        const lastLine = results[results.length - 1];
+        results[results.length - 1] = lastLine.substring(0, 32) + '...';
+      }
+    }
+    
+    if (data.labels?.length > 0) {
+      const topLabels = data.labels
+        .sort((a, b) => parseFloat(b.confidence) - parseFloat(a.confidence))
+        .slice(0, 2)
+        .map(label => `${label.description} (${parseFloat(label.confidence).toFixed(0)}%)`);
+      
+      const labelText = `Labels: ${topLabels.join(', ')}`;
+      if (labelText.length > 35) {
+        results.push(labelText.substring(0, 32) + '...');
+      } else {
+        results.push(labelText);
+      }
+    }
+
+    return results;
+  };
+
+  if (!imageUrl || imageUrl === "-") return null;
+  if (isLoading) return <div className="text-xs text-[#858080] mt-1">Loading analysis...</div>;
+  if (!analysisData) return null;
+
+  const results = formatResults(analysisData);
+  if (results.length === 0) return null;
+
+  return (
+    <div className="mt-1 max-w-[180px]">
+      {results.map((result, index) => (
+        <div key={index} className="text-xs text-[#858080] leading-4">{result}</div>
+      ))}
+    </div>
+  );
+});
+
+// Update the CameraImageCell to pass boxId
 const CameraImageCell = React.memo(({ item, handleImageClick, formatTimestamp }) => {
   if (item.cameraImage === "-") {
     return <span className="text-[#858080]">-</span>;
@@ -39,6 +174,11 @@ const CameraImageCell = React.memo(({ item, handleImageClick, formatTimestamp })
         </div>
         <div className="flex flex-col ml-2">
           <span className="text-sm text-[#858080]">{formatTimestamp(item.timestamp)}</span>
+          <ImageAnalysisDisplay 
+            imageUrl={item.cameraImage} 
+            timestamp={item.timestamp}
+            boxId={item["Please enter the box ID you're putting the item in?"]}
+          />
         </div>
       </div>
     </div>
@@ -46,6 +186,58 @@ const CameraImageCell = React.memo(({ item, handleImageClick, formatTimestamp })
 });
 
 CameraImageCell.displayName = 'CameraImageCell';
+
+const FormImageCell = React.memo(({ item, handleImageClick, formatTimestamp }) => {
+  console.log('[FormImageCell] Received item data:', {
+    formImageUrl: item.formImageUrl,
+    timestamp: item.timestamp
+  });
+
+  if (!item.formImageUrl || item.formImageUrl === "-") {
+    console.log('[FormImageCell] No valid image URL found');
+    return <span className="text-[#858080]">-</span>;
+  }
+
+  let displayUrl = item.formImageUrl;
+  if (displayUrl.includes('drive.google.com')) {
+    const fileId = displayUrl.match(/id=(.*?)(&|$)/)?.[1];
+    if (fileId) {
+      displayUrl = `https://drive.google.com/uc?id=${fileId}`;
+      console.log('[FormImageCell] Processed Google Drive URL:', displayUrl);
+    }
+  }
+
+  return (
+    <div className="flex flex-col items-center">
+      <div className="flex items-center">
+        <div className="relative">
+          <img
+            src={displayUrl}
+            alt="Form Upload"
+            className="w-10 h-10 rounded-md object-cover cursor-pointer"
+            onClick={() => handleImageClick(displayUrl)}
+            onError={(e) => {
+              console.log('[FormImageCell] Image load error, trying thumbnail');
+              if (displayUrl.includes('drive.google.com')) {
+                const fileId = displayUrl.match(/id=(.*?)(&|$)/)?.[1];
+                if (fileId) {
+                  e.target.src = `https://drive.google.com/thumbnail?id=${fileId}`;
+                }
+              } else {
+                e.target.src = DEFAULT_IMAGE;
+              }
+            }}
+          />
+        </div>
+        <div className="flex flex-col ml-2">
+          <span className="text-sm text-[#858080]">{formatTimestamp(item.timestamp)}</span>
+        </div>
+      </div>
+    </div>
+  );
+});
+
+FormImageCell.displayName = 'FormImageCell';
 
 export const Monitoring = () => {
   const navigate = useNavigate();
@@ -55,12 +247,13 @@ export const Monitoring = () => {
   const scrollContainerRef = useRef(null);
 
   // State Management
-  const [selectedBox, setSelectedBox] = useState(1506);
+  const [selectedBox, setSelectedBox] = useState(null);
   const [popUpImage, setPopUpImage] = useState(null);
   const [showDetailsBox, setShowDetailsBox] = useState(false);
   const [activeRow, setActiveRow] = useState(null);
   const [boxDetails, setBoxDetails] = useState({});
   const [isLoading, setIsLoading] = useState(true);
+
 
   // Utility Functions
   const isWithinTimeWindow = useCallback((timestamp1, timestamp2) => {
@@ -165,124 +358,101 @@ const handleDoorOpen = useCallback((boxId, doorData) => {
   });
 }, [isWithinTimeWindow]);
 
-  const checkForNewImage = useCallback(async (boxId, doorTimestamp, retryCount = 0, maxRetries = 30) => {
-    console.log(`[Camera Monitor] Checking for new image (attempt ${retryCount + 1}/${maxRetries})`);
+const checkForNewImage = useCallback(async (boxId, doorTimestamp, retryCount = 0, maxRetries = 30) => {
+  console.log(`[Camera Monitor] Checking for new image (attempt ${retryCount + 1}/${maxRetries})`);
+  
+  try {
+    const imageRef = storageRef(storage, 'missingmatters_photos/Camera_Images');
+    const files = await listAll(imageRef);
     
-    try {
-      const imageRef = storageRef(storage, 'missingmatters_photos/Camera_Images');
-      const files = await listAll(imageRef);
+    console.log(`[Camera Monitor] Found ${files.items.length} files in storage`);
+    
+    const boxImages = files.items.filter(item => item.name.startsWith(`HN ${boxId}_`));
+    console.log(`[Camera Monitor] Found ${boxImages.length} images for Box ${boxId}`);
+    
+    if (boxImages.length > 0) {
+      const doorTime = new Date(doorTimestamp).getTime();
       
-      console.log(`[Camera Monitor] Found ${files.items.length} files in storage`);
+      const relevantImages = boxImages.filter(image => {
+        const imageTimeStr = image.name.split('_')[1].replace('.jpg', '');
+        const formattedImageTime = imageTimeStr.replace(
+          /(\d{4})(\d{2})(\d{2})T(\d{2})(\d{2})(\d{2})\.(\d{3})Z/,
+          '$1-$2-$3T$4:$5:$6.$7Z'
+        );
+        const imageTime = new Date(formattedImageTime).getTime();
+        return imageTime >= doorTime && imageTime <= doorTime + TIME_WINDOW;
+      });
       
-      const boxImages = files.items.filter(item => item.name.startsWith(`HN ${boxId}_`));
-      console.log(`[Camera Monitor] Found ${boxImages.length} images for Box ${boxId}`);
-      
-      if (boxImages.length > 0) {
-        // Parse door timestamp
-        const doorTime = new Date(doorTimestamp).getTime();
-        
-        // Find images within the 5-minute window after door opened
-        const relevantImages = boxImages.filter(image => {
-          const imageTimeStr = image.name.split('_')[1].replace('.jpg', '');
-          // Convert format like "20250111T160329.000Z" to "2025-01-11T16:03:29.000Z"
-          const formattedImageTime = imageTimeStr.replace(
-            /(\d{4})(\d{2})(\d{2})T(\d{2})(\d{2})(\d{2})\.(\d{3})Z/,
-            '$1-$2-$3T$4:$5:$6.$7Z'
-          );
-          const imageTime = new Date(formattedImageTime).getTime();
-          return imageTime >= doorTime && imageTime <= doorTime + TIME_WINDOW;
-        });
-        
-        if (relevantImages.length === 0) {
-          console.log(`[Camera Monitor] No images found within 5-minute window after door opened at ${doorTimestamp}`);
-          if (retryCount < maxRetries) {
-            setTimeout(() => {
-              checkForNewImage(boxId, doorTimestamp, retryCount + 1, maxRetries);
-            }, 10000);
-          }
-          return false;
-        }
-        
-        // Sort relevant images by timestamp
-        const sortedImages = relevantImages.sort((a, b) => {
-          const timeA = a.name.split('_')[1].replace('.jpg', '');
-          const timeB = b.name.split('_')[1].replace('.jpg', '');
-          return timeB.localeCompare(timeA);
-        });
-
-        const mostRecent = sortedImages[0];
-        console.log(`[Camera Monitor] Found relevant image: ${mostRecent.name}`);
-        
-        const imageTimestamp = mostRecent.name.split('_')[1].replace('.jpg', '');
-        console.log(`[Camera Monitor] Image timestamp: ${imageTimestamp}, Door timestamp: ${doorTimestamp}`);
-
-        const imageUrl = await getDownloadURL(mostRecent);
-        
-        setBoxDetails(prevDetails => {
-          const updatedDetails = { ...prevDetails };
-          const boxContent = updatedDetails[boxId]?.middleContent;
-          
-          if (!boxContent?.length) return prevDetails;
-
-          // Find the most recent row that matches our criteria
-          const targetRowIndex = boxContent.findIndex(row => {
-            // Parse both timestamps to milliseconds for comparison
-            const rowTime = new Date(row.timestamp).getTime();
-            const doorTime = new Date(doorTimestamp).getTime();
-            
-            return row.bottomActions.doorOpened && 
-                   row.cameraImage === "-" &&
-                   Math.abs(rowTime - doorTime) < 60000; // Allow 1-minute difference
-          });
-          
-          if (targetRowIndex !== -1) {
-            console.log(`[Camera Monitor] Successfully updating row ${targetRowIndex} with new image`);
-            console.log(`[Camera Monitor] Row timestamp: ${boxContent[targetRowIndex].timestamp}`);
-            updatedDetails[boxId].middleContent[targetRowIndex].cameraImage = imageUrl;
-            updatedDetails[boxId].middleContent[targetRowIndex].bottomActions.imageCaptured = true;
-            updatedDetails[boxId].middleContent[targetRowIndex].bottomActions.sentToCloud = true;
-            setActiveRow(targetRowIndex);
-
-            // Save to Complete_data in Firebase
-            try {
-              const safeTimestamp = boxContent[targetRowIndex].timestamp.replace(/[.]/g, '_');
-              const completeDataRef = dbRef(db, `Complete_data/${boxId}/${safeTimestamp}`);
-              set(completeDataRef, {
-                box_ID: boxId,
-                camera_image: imageUrl,
-                timestamp: boxContent[targetRowIndex].timestamp,
-                status: "UNCLAIMED"
-              });
-            } catch (error) {
-              console.error('[Camera Monitor] Error saving to Firebase:', error);
-            }
-          } else {
-            console.log(`[Camera Monitor] No matching row found for timestamp ${doorTimestamp}`);
-          }
-          
-          return updatedDetails;
-        });
-        
-        return true;
-      } else {
-        console.log(`[Camera Monitor] No matching images found yet`);
-        
+      if (relevantImages.length === 0) {
+        console.log(`[Camera Monitor] No images found within time window after door opened at ${doorTimestamp}`);
         if (retryCount < maxRetries) {
           setTimeout(() => {
             checkForNewImage(boxId, doorTimestamp, retryCount + 1, maxRetries);
           }, 10000);
-        } else {
-          console.log(`[Camera Monitor] Exceeded maximum retry attempts`);
         }
-        
         return false;
       }
-    } catch (error) {
-      console.error('[Camera Monitor] Error checking for new image:', error);
-      console.error('Error details:', error.message);
-      return false;
+      
+      const mostRecent = relevantImages[0];
+      console.log(`[Camera Monitor] Found relevant image: ${mostRecent.name}`);
+      
+      const imageTimestamp = mostRecent.name.split('_')[1].replace('.jpg', '');
+      console.log(`[Camera Monitor] Image timestamp: ${imageTimestamp}, Door timestamp: ${doorTimestamp}`);
+
+      const imageUrl = await getDownloadURL(mostRecent);
+      
+      setBoxDetails(prevDetails => {
+        const updatedDetails = { ...prevDetails };
+        const boxContent = updatedDetails[boxId]?.middleContent;
+        
+        if (!boxContent?.length) return prevDetails;
+
+        const targetRowIndex = boxContent.findIndex(row => {
+          const rowTime = new Date(row.timestamp).getTime();
+          const doorTime = new Date(doorTimestamp).getTime();
+          
+          return Math.abs(rowTime - doorTime) < 60000; // Allow 1-minute difference
+        });
+        
+        if (targetRowIndex !== -1) {
+          console.log(`[Camera Monitor] Successfully updating row ${targetRowIndex} with new image`);
+          console.log(`[Camera Monitor] Row timestamp: ${boxContent[targetRowIndex].timestamp}`);
+          updatedDetails[boxId].middleContent[targetRowIndex].cameraImage = imageUrl;
+          updatedDetails[boxId].middleContent[targetRowIndex].bottomActions.imageCaptured = true;
+          updatedDetails[boxId].middleContent[targetRowIndex].bottomActions.sentToCloud = true;
+          setActiveRow(targetRowIndex);
+
+          const safeTimestamp = boxContent[targetRowIndex].timestamp.replace(/[.]/g, '_');
+          const completeDataRef = dbRef(db, `Complete_data/${boxId}/${safeTimestamp}`);
+          set(completeDataRef, {
+            box_ID: boxId,
+            camera_image: imageUrl,
+            timestamp: boxContent[targetRowIndex].timestamp,
+            status: "UNCLAIMED"
+          });
+          
+          return updatedDetails;
+        }
+        
+        console.log(`[Camera Monitor] No matching row found for timestamp ${doorTimestamp}`);
+        return prevDetails;
+      });
+      
+      return true;
     }
-  }, [storage, db]);
+    
+    if (retryCount < maxRetries) {
+      setTimeout(() => {
+        checkForNewImage(boxId, doorTimestamp, retryCount + 1, maxRetries);
+      }, 10000);
+    }
+    
+    return false;
+  } catch (error) {
+    console.error('[Camera Monitor] Error checking for new image:', error);
+    return false;
+  }
+}, [storage, db]);
 
   // Update QR Status
   const updateQRStatus = useCallback((boxId, timestamp) => {
@@ -310,6 +480,8 @@ const handleDoorOpen = useCallback((boxId, doorData) => {
   // Door Status Monitoring
   const monitorDoorStatus = useCallback((boxId) => {
     console.log(`[Door Monitor] Starting monitoring for Box ${boxId}`);
+
+    const deviceBoxId = `HN ${boxId}`; // This ensures consistent formatting
     const doorStatusRef = dbRef(db, `devices/HN ${boxId}/door_status`);
     
     return onValue(doorStatusRef, async (snapshot) => {
@@ -359,134 +531,118 @@ const handleDoorOpen = useCallback((boxId, doorData) => {
 
 
 // Additional Details Monitoring
-const checkAndUpdateClaimStatus = useCallback(async (itemDescription) => {
-  if (!itemDescription || itemDescription === "-") return "UNCLAIMED";
-  
-  try {
-    const lostReportsRef = dbRef(db, 'lost_reports');
-    const snapshot = await get(lostReportsRef);
-    const lostReports = snapshot.val();
-    
-    if (!lostReports) return "UNCLAIMED";
-
-    const isMatched = Object.values(lostReports).some(report => {
-      const reportDesc = report.description.toLowerCase().trim();
-      const itemDesc = itemDescription.toLowerCase().trim();
-      return reportDesc.includes(itemDesc) || itemDesc.includes(reportDesc);
-    });
-    
-    console.log(`[Claim Status] Item "${itemDescription}" matched: ${isMatched}`);
-    return isMatched ? "CLAIMED" : "UNCLAIMED";
-  } catch (error) {
-    console.error("Error checking lost reports:", error);
-    return "UNCLAIMED";
-  }
-}, [db]);
-
 const monitorAdditionalDetails = useCallback((boxId) => {
-  console.log(`[Form Monitor] Starting monitoring for Box ${boxId}`);
   const responsesRef = dbRef(db, 'responses');
   
   return onValue(responsesRef, async (snapshot) => {
+    if (!snapshot.exists()) return;
+    
     const responses = snapshot.val();
-    if (!responses) return;
+    console.log('[Form Monitor] Processing all responses:', {
+      totalResponses: Object.keys(responses).length,
+      boxId: boxId
+    });
 
     setBoxDetails(prevDetails => {
       const updatedDetails = { ...prevDetails };
-      const boxContent = updatedDetails[boxId]?.middleContent;
-      if (!boxContent?.length) return prevDetails;
+      if (!updatedDetails[boxId]?.middleContent) return prevDetails;
 
-      boxContent.forEach(async (row, rowIndex) => {
-        const doorOpenTime = new Date(row.timestamp).getTime();
-        const endWindow = doorOpenTime + TIME_WINDOW;
-        const now = Date.now();
+      const allResponses = Object.entries(responses).map(([id, data]) => ({...data, responseId: id}));
+      console.log('[Form Monitor] All responses mapped:', allResponses.length);
 
-        if (now <= endWindow) {
-          const relevantResponses = Object.values(responses).filter(data => {
-            if (data["Please enter the box ID you're putting the item in?"] !== boxId) return false;
-
-            const formDate = new Date(data.timestamp);
-            formDate.setHours(formDate.getHours() + 5);
-            formDate.setMinutes(formDate.getMinutes() + 30);
-            const formTime = formDate.getTime();
-
-            return formTime >= doorOpenTime && formTime <= endWindow;
-          });
-
-          if (relevantResponses.length > 0 && !row.bottomActions.formSubmitted) {
-            const mostRecent = relevantResponses[relevantResponses.length - 1];
-            console.log(`[Form Monitor] Processing form submission for timestamp: ${row.timestamp}`);
-
-            const formData = {
-              name: mostRecent.Name || "-",
-              phone: mostRecent["Phone number"] || "-",
-              item_description: mostRecent["Please describe the item"] || "-",
-              item_type: mostRecent["What is the item?"] || "-",
-              location: mostRecent["Where did you find the item?"] || "-"
-            };
-
-            let processedFormImageUrl = mostRecent.formImageUrl || "-";
-            if (processedFormImageUrl && processedFormImageUrl.includes('drive.google.com')) {
-              const matches = processedFormImageUrl.match(/\/d\/(.*?)\/|id=(.*?)(&|$)/);
-              const fileId = matches ? (matches[1] || matches[2]) : null;
-              if (fileId) {
-                processedFormImageUrl = `https://drive.google.com/uc?id=${fileId}`;
-              }
-            }
-
-            // Get claim status
-            const claimStatus = await checkAndUpdateClaimStatus(formData.item_description);
-
-            // Update the row immediately
-            updatedDetails[boxId].middleContent[rowIndex] = {
-              ...row,
-              Name: formData.name,
-              "Phone number": formData.phone,
-              "Please describe the item": formData.item_description,
-              "What is the item?": formData.item_type,
-              "Where did you find the item?": formData.location,
-              status: claimStatus,
-              formImageUrl: processedFormImageUrl,
-              bottomActions: {
-                ...row.bottomActions,
-                formSubmitted: true,
-                qrDisplayed: true
-              }
-            };
-
-            // Force immediate UI update for the active row
-            if (activeRow === rowIndex) {
-              setActiveRow(rowIndex);
-            }
-
-            // Save to Firebase
-            try {
-              const safeTimestamp = row.timestamp.replace(/[.]/g, '_');
-              const completeDataRef = dbRef(db, `Complete_data/${boxId}/${safeTimestamp}`);
-              
-              const firebaseData = {
-                box_ID: boxId,
-                camera_image: row.cameraImage || "-",
-                form_image: processedFormImageUrl || "-",
-                status: claimStatus || "UNCLAIMED",
-                timestamp: row.timestamp,
-                additional_details: formData
-              };
-
-              await set(completeDataRef, firebaseData);
-              console.log('[Form Monitor] Form data saved successfully');
-            } catch (error) {
-              console.error('[Form Monitor] Error saving form data:', error);
-            }
-          }
-        }
+      const boxResponses = allResponses.filter(form => {
+        const matches = form["Please enter the box ID you're putting the item in?"] === String(boxId);
+        console.log('[Form Monitor] Checking response:', {
+          responseId: form.responseId,
+          formBoxId: form["Please enter the box ID you're putting the item in?"],
+          expectedBoxId: String(boxId),
+          matches: matches
+        });
+        return matches;
+      });
+      
+      console.log('[Form Monitor] Matching responses for box:', {
+        boxId: boxId,
+        matches: boxResponses.length
       });
 
-      return updatedDetails;
+      if (boxResponses.length === 0) return prevDetails;
+
+      const latestForm = boxResponses.sort((a, b) => 
+        new Date(b.timestamp) - new Date(a.timestamp)
+      )[0];
+
+      const formTimeUTC = new Date(latestForm.timestamp);
+      const formTimeIST = new Date(formTimeUTC.getTime() + (5 * 60 + 30) * 60 * 1000);
+
+      const rowIndex = updatedDetails[boxId].middleContent.findIndex(row => {
+        const doorTime = new Date(row.timestamp).getTime();
+        const timeDiff = Math.abs(formTimeIST.getTime() - doorTime);
+        console.log('[Form Monitor] Time comparison:', {
+          formTime: formTimeIST.toISOString(),
+          doorTime: new Date(doorTime).toISOString(),
+          diffMinutes: Math.floor(timeDiff / 60000),
+          withinWindow: timeDiff <= TIME_WINDOW
+        });
+        return timeDiff <= TIME_WINDOW;
+      });
+
+      if (rowIndex !== -1) {
+        let formImageUrl = latestForm.formImageUrl;
+        if (formImageUrl && formImageUrl.includes('drive.google.com')) {
+          const fileId = formImageUrl.match(/id=(.*?)(&|$)/)?.[1];
+          if (fileId) {
+            formImageUrl = `https://drive.google.com/uc?id=${fileId}`;
+            console.log('[Form Monitor] Processed image URL:', formImageUrl);
+          }
+        }
+
+        updatedDetails[boxId].middleContent[rowIndex] = {
+          ...updatedDetails[boxId].middleContent[rowIndex],
+          Name: latestForm["Name "] || "-",
+          "Phone number": latestForm["Phone number "] || "-",
+          "Please describe the item": latestForm["Please describe the item"] || "-",
+          "What is the item?": latestForm["What is the item?"] || "-",
+          "Where did you find the item?": latestForm["Where did you find the item?"] || "-",
+          formImageUrl: formImageUrl || "-",
+          bottomActions: {
+            ...updatedDetails[boxId].middleContent[rowIndex].bottomActions,
+            formSubmitted: true
+          }
+        };
+
+        console.log('[Form Monitor] Updated row data:', {
+          rowIndex,
+          formImage: formImageUrl,
+          hasFormSubmitted: true
+        });
+
+        const safeTimestamp = updatedDetails[boxId].middleContent[rowIndex].timestamp.replace(/[.]/g, '_');
+        const completeDataRef = dbRef(db, `Complete_data/${boxId}/${safeTimestamp}`);
+        
+        set(completeDataRef, {
+          box_ID: boxId,
+          camera_image: updatedDetails[boxId].middleContent[rowIndex].cameraImage || "-",
+          form_image: formImageUrl || "-",
+          timestamp: updatedDetails[boxId].middleContent[rowIndex].timestamp,
+          status: updatedDetails[boxId].middleContent[rowIndex].status,
+          additional_details: {
+            name: latestForm["Name "] || "-",
+            phone: latestForm["Phone number "] || "-",
+            item_description: latestForm["Please describe the item"] || "-",
+            item_type: latestForm["What is the item?"] || "-",
+            location: latestForm["Where did you find the item?"] || "-"
+          }
+        });
+
+        return updatedDetails;
+      }
+
+      console.log('[Form Monitor] No matching row found within time window');
+      return prevDetails;
     });
   });
-}, [db, checkAndUpdateClaimStatus, TIME_WINDOW, activeRow]);
-
+}, [db, TIME_WINDOW]);
 
   // Event Handlers
   const handleScrollLeft = () => {
@@ -501,10 +657,14 @@ const monitorAdditionalDetails = useCallback((boxId) => {
     }
   };
 
-  const handleBoxClick = (num) => {
-    setSelectedBox(num);
-    setActiveRow(0);
-  };
+// Update your handleBoxClick function to ensure consistent formatting
+const handleBoxClick = (num) => {
+  setSelectedBox(num);
+  setActiveRow(0);
+  const formattedBoxId = `HN ${num}`;
+  navigate(`/monitoring?box=${encodeURIComponent(formattedBoxId)}`, { replace: true });
+  console.log('Box selected:', formattedBoxId);
+};
 
 // Modify row click handler to prevent changing selection during process
 const handleRowClick = (rowIndex) => {
@@ -533,19 +693,23 @@ const handleRowClick = (rowIndex) => {
   };
 
   const handleImageClick = (imageSrc) => {
-    if (!imageSrc) return;
+    if (!imageSrc || imageSrc === "-") return;
+    
+    let popupUrl = imageSrc;
     if (imageSrc.includes('drive.google.com')) {
       try {
-        const fileId = imageSrc.match(/id=([^&]+)/)[1];
-        setPopUpImage(`https://drive.google.com/uc?id=${fileId}&export=view`);
+        const fileId = imageSrc.match(/id=(.*?)(&|$)/)[1];
+        // Use high-quality view URL for popup
+        popupUrl = `https://drive.google.com/uc?export=view&id=${fileId}`;
       } catch (error) {
-        console.error('Error processing pop-up image URL:', error);
+        console.error('Error processing popup image URL:', error);
+        return;
       }
-    } else {
-      setPopUpImage(imageSrc);
     }
+    
+    setPopUpImage(popupUrl);
   };
-
+  
   const handleDetailsIconClick = (index) => {
     setActiveRow(index);
     setShowDetailsBox(true);
@@ -563,19 +727,24 @@ useEffect(() => {
 
   const setupMonitoring = async () => {
     try {
-      // First load saved data
+      // First load existing data from Complete_data
       const completeDataRef = dbRef(db, 'Complete_data');
       const snapshot = await get(completeDataRef);
       const savedData = snapshot.val();
       
       if (savedData) {
         const processedData = {};
+        
         Object.entries(savedData).forEach(([boxId, boxData]) => {
-          processedData[boxId] = { middleContent: [] };
+          if (!processedData[boxId]) {
+            processedData[boxId] = { middleContent: [] };
+          }
           
           Object.entries(boxData).forEach(([timestamp, data]) => {
+            const formattedTimestamp = timestamp.replace(/_/g, '.');
+            
             const row = {
-              timestamp: data.timestamp,
+              timestamp: formattedTimestamp,
               cameraImage: data.camera_image || "-",
               formImageUrl: data.form_image || "-",
               Name: data.additional_details?.name || "-",
@@ -593,9 +762,11 @@ useEffect(() => {
                 formSubmitted: data.additional_details?.name !== "-" || data.form_image !== "-"
               }
             };
+            
             processedData[boxId].middleContent.push(row);
           });
           
+          // Sort by timestamp in descending order
           processedData[boxId].middleContent.sort((a, b) => 
             new Date(b.timestamp) - new Date(a.timestamp)
           );
@@ -604,14 +775,14 @@ useEffect(() => {
         setBoxDetails(processedData);
       }
 
-      // Then set up real-time monitoring
-      const boxIds = ['1506', '1507'];
-      boxIds.forEach(boxId => {
+      // Set up real-time monitoring for selected box
+      if (selectedBox) {
+        console.log(`Setting up monitoring for box ${selectedBox}`);
         unsubscribers.push(
-          monitorDoorStatus(boxId),
-          monitorAdditionalDetails(boxId)
+          monitorDoorStatus(selectedBox),
+          monitorAdditionalDetails(selectedBox)
         );
-      });
+      }
 
     } catch (error) {
       console.error('Failed to setup monitoring:', error);
@@ -623,10 +794,10 @@ useEffect(() => {
   setupMonitoring();
 
   return () => {
-    console.log('Removing listeners and subscriptions');
+    console.log('Cleaning up monitoring subscriptions');
     unsubscribers.forEach(unsubscribe => unsubscribe());
   };
-}, [db, monitorDoorStatus, monitorAdditionalDetails]);
+}, [db, monitorDoorStatus, monitorAdditionalDetails, selectedBox]);
 
 // Initialize selected box
 useEffect(() => {
@@ -638,7 +809,7 @@ useEffect(() => {
     const selectedRow = activeRow !== null && boxDetails[selectedBox]?.middleContent[activeRow];
     
     return (
-      <div className="bg-[#1E1E1E] border border-[#2E2E2E] rounded-[25px] h-[125px] mx-10 mt-6">
+      <div className="bg-[#FFFFFF] border border-[#D9D9D9] rounded-[25px] h-[125px] mx-10 mt-6">
         <div className="flex items-center justify-evenly h-full px-10">
           {[
             { key: 'doorOpened', label: 'Door Opened' },
@@ -683,60 +854,46 @@ useEffect(() => {
   };
 
 
-  // Main Render
   return (
-    <div className="flex flex-col h-screen bg-[#D9D9D9] text-white">
+    <div className="flex h-screen bg-[#F3F4F4] overflow-hidden">
       {/* Sidebar */}
-      <div className="flex h-full">
-        <div className="flex flex-col items-center py-8 bg-[#1e1e1e] w-24 rounded-tr-[25px] rounded-br-[25px]">
-          <div className="bg-[#2A2929] rounded-full h-16 w-16 flex items-center justify-center mb-8">
-            <span className="text-[#858080] text-[24px] font-semibold font-montserrat">MM</span>
-          </div>
-          <nav className="flex flex-col items-center justify-center flex-grow space-y-4">
-            <img
-              src={futures}
-              alt="Futures"
-              className="w-8 h-8 hover:opacity-80 cursor-pointer"
-              onClick={() => navigate("/dashboard")}
-            />
-            <img
-              src={dataCenter}
-              alt="Data Center"
-              className="w-8 h-8 hover:opacity-80 cursor-pointer"
-              onClick={() => navigate("/ads")}
-            />
-            <img
-              src={dashboard}
-              alt="Dashboard"
-              className="w-8 h-8 hover:opacity-80 cursor-pointer"
-              onClick={() => navigate("/monitoring")}
-            />
-            <img 
-              src={lineChart} 
-              alt="Line Chart" 
-              className="w-8 h-8 hover:opacity-80 cursor-pointer" 
-            />
-            <img 
-              src={tasks} 
-              alt="Tasks" 
-              className="w-8 h-8 hover:opacity-80 cursor-pointer" 
-            />
-          </nav>
-          <div className="mt-auto mb-4">
-            <img
-              src={logout}
-              alt="Logout"
-              className="w-8 h-8 hover:opacity-80 cursor-pointer"
-              onClick={handleLogout}
-            />
-
-</div>
+      <div className="flex flex-col items-center py-8 bg-[#FFFFFF] w-24 rounded-[25px] m-4 shadow-lg">
+        <div className="bg-[#FFFFFF] rounded-full h-16 w-16 flex items-center justify-center mb-6" style={{ border: '1px solid #D9D9D9' }}>
+          <img src={mmlogo} alt="MM Logo" className="h-12 w-12" />
         </div>
+        
+        <nav className="flex flex-col items-center justify-center flex-grow space-y-4">
+          {[
+            { src: futures, alt: "Futures", path: "/dashboard" },
+            { src: dataCenter, alt: "Data Center", path: "/ads" },
+            { src: dashboard, alt: "Dashboard", path: "/monitoring" },
+            { src: lineChart, alt: "Analytics", path: "" },
+            { src: tasks, alt: "Tasks", path: "" }
+          ].map((item) => (
+            <img
+              key={item.alt}
+              src={item.src}
+              alt={item.alt}
+              className="w-8 h-8 hover:opacity-80 cursor-pointer"
+              onClick={() => item.path && navigate(item.path)}
+            />
+          ))}
+        </nav>
+
+        <div className="mt-auto mb-4">
+          <img
+            src={logout}
+            alt="Logout"
+            className="w-8 h-8 hover:opacity-80 cursor-pointer"
+            onClick={handleLogout}
+          />
+        </div>
+      </div>
 
         {/* Main Content Area */}
         <div className="flex-1 p-6 space-y-6">
           {/* Top Container - Box Selection */}
-          <div className="flex items-center justify-between bg-[#D9D9D9] border border-[#1E1E1E] rounded-[25px] py-8 px-4 mx-10 relative">
+          <div className="flex items-center justify-between bg-[#FFFFFF] border border-[#D9D9D9] rounded-[25px] py-8 px-4 mx-10 relative">
             <button onClick={handleScrollLeft} className="p-2">
               <img src={lessThan} alt="Previous" className="w-6 h-6" />
             </button>
@@ -752,9 +909,9 @@ useEffect(() => {
                   className="flex items-center justify-center space-x-4 p-3 rounded-[25px] shadow-md cursor-pointer"
                   style={{
                     width: "173.25px",
-                    backgroundColor: selectedBox === num ? "#1E1E1E" : "#D9D9D9",
+                    backgroundColor: selectedBox === num ? "#FFFFFF" : "#FFFFFF",
                     color: selectedBox === num ? "#858080" : "#000",
-                    border: "1px solid #1E1E1E",
+                    border: "1px solid #D9D9D9",
                   }}
                 >
                   <img src={openParcel} alt="Box Icon" className="w-8 h-8" />
@@ -770,110 +927,95 @@ useEffect(() => {
           {/* Bottom Container - Action Status */}
           {renderBottomContainer()}
 
-          {/* Middle Container - Box Contents */}
-          {selectedBox && (
-            <div className="bg-[#1E1E1E] border border-[#858080] rounded-[25px] mx-10 p-4 mt-6 h-[50vh] overflow-y-auto">
-              {/* Table Header */}
-              <div className="flex items-center px-4 bg-[#1E1E1E] border border-[#3C3B3B] rounded-[15px] h-[50px] w-[95%] mx-auto">
-                <div className="text-sm text-[#858080] font-semibold w-[10%] text-center">S. NO</div>
-                <div className="h-full w-[1px] bg-gray-600"></div>
-                <div className="text-sm text-[#858080] font-semibold flex-1 text-center">CAMERA IMAGE</div>
-                <div className="h-full w-[1px] bg-gray-600"></div>
-                <div className="text-sm text-[#858080] font-semibold flex-1 text-center">FORM IMAGE</div>
-                <div className="h-full w-[1px] bg-gray-600"></div>
-                <div className="text-sm text-[#858080] font-semibold flex-1 text-center">ADDITIONAL DETAILS</div>
-                <div className="h-full w-[1px] bg-gray-600"></div>
-                <div className="text-sm text-[#858080] font-semibold flex-1 text-center">STATUS</div>
-              </div>
+{/* Middle Container - Box Contents */}
+{selectedBox && (
+  <div className="bg-[#FFFFFF] border border-[#D9D9D9] rounded-[25px] mx-10 p-4 mt-6 h-[50vh] overflow-y-auto">
+    {/* Table Header */}
+    <div className="flex items-center px-4 bg-[#FFFFFF] border border-[#D9D9D9] rounded-[25px] h-[50px] w-[95%] mx-auto">
+      <div className="text-sm text-[#858080] font-semibold w-[8%] text-center">S. NO</div>
+      <div className="h-full w-[1px] bg-gray-600"></div>
+      <div className="text-sm text-[#858080] font-semibold w-[34%] text-center">CAMERA IMAGE</div>
+      <div className="h-full w-[1px] bg-gray-600"></div>
+      <div className="text-sm text-[#858080] font-semibold w-[34%] text-center">FORM IMAGE</div>
+      <div className="h-full w-[1px] bg-gray-600"></div>
+      <div className="text-sm text-[#858080] font-semibold w-[16%] text-center">ADDITIONAL DETAILS</div>
+      <div className="h-full w-[1px] bg-gray-600"></div>
+      <div className="text-sm text-[#858080] font-semibold w-[8%] text-center">STATUS</div>
+    </div>
 
-              {/* Table Content */}
-              {boxDetails[selectedBox]?.middleContent?.length > 0 ? (
-                boxDetails[selectedBox].middleContent.map((item, index) => (
-                  <div
-                    key={index}
-                    className="flex items-center py-4 px-4 mt-4"
-                    style={{
-                      width: "95%",
-                      margin: "0 auto",
-                      borderBottom:
-                        index < boxDetails[selectedBox].middleContent.length - 1
-                          ? "1px solid #3C3B3B"
-                          : "none",
-                    }}
-                  >
-                    <div
-                      className={`w-[10%] text-center text-sm font-semibold cursor-pointer ${
-                        activeRow === index ? "bg-gray-700 rounded-full text-white" : "text-[#858080]"
-                      }`}
-                      onClick={() => handleRowClick(index)}
-                    >
-                      {index + 1}
-                    </div>
-                    <div className="flex-1 flex items-center justify-center">
-                      <CameraImageCell
-                        item={item}
-                        handleImageClick={handleImageClick}
-                        formatTimestamp={formatTimestamp}
-                      />
-                    </div>
-                    <div className="flex-1 flex items-center justify-center">
-                      {item.formImageUrl && item.formImageUrl !== "-" ? (
-                        <div className="flex items-center">
-                          <img
-                            src={item.formImageUrl.includes('drive.google.com') 
-                              ? `https://drive.google.com/uc?id=${item.formImageUrl.match(/id=([^&]+)/)[1]}&export=view`
-                              : item.formImageUrl}
-                            alt="Form Upload"
-                            className="w-10 h-10 rounded-md object-cover cursor-pointer"
-                            onClick={() => handleImageClick(item.formImageUrl)}
-                            onError={(e) => {
-                              if (item.formImageUrl.includes('drive.google.com')) {
-                                const fileId = item.formImageUrl.match(/id=([^&]+)/)[1];
-                                e.target.src = `https://drive.google.com/thumbnail?id=${fileId}`;
-                              } else {
-                                e.target.src = DEFAULT_IMAGE;
-                              }
-                            }}
-                          />
-                          <span className="text-sm text-[#858080] ml-2">
-                            {formatTimestamp(item.timestamp)}
-                          </span>
-                        </div>
-                      ) : (
-                        <span className="text-[#858080]">-</span>
-                      )}
-                    </div>
-                    <div className="flex-1 flex items-center justify-center">
-                      <img
-                        src={boxImportant}
-                        alt="Details Icon"
-                        className="w-6 h-6 mr-2 cursor-pointer"
-                        onClick={() => handleDetailsIconClick(index)}
-                      />
-                      <p 
-                        className="text-sm text-[#858080] cursor-pointer" 
-                        onClick={() => handleDetailsIconClick(index)}
-                      >
-                        Details
-                      </p>
-                    </div>
-                    <div className="flex-1 text-center">
-                      <button
-                        className={`px-4 py-2 rounded-full text-white font-montserrat text-[8px] ${
-                          item.status === "CLAIMED" ? "bg-[#339265]" : "bg-[#A14342]"
-                        }`}
-                      >
-                        {item.status}
-                      </button>
-                    </div>
-                  </div>
-                ))
-              ) : (
-                <div className="text-center text-[#858080] py-4">No items in this box</div>
-              )}
+    {/* Table Content */}
+    {boxDetails[selectedBox]?.middleContent?.length > 0 ? (
+      [...boxDetails[selectedBox].middleContent]
+        .sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp))
+        .map((item, index) => (                    
+          <div
+            key={index}
+            className="grid grid-cols-[8%_34%_34%_16%_8%] items-start py-6 px-4 mt-4"
+            style={{
+              width: "95%",
+              margin: "0 auto",
+              borderBottom:
+                index < boxDetails[selectedBox].middleContent.length - 1
+                  ? "1px solid #D9D9D9"
+                  : "none",
+            }}
+          >
+            <div
+              className={`text-center text-sm font-semibold cursor-pointer ${
+                activeRow === index ? "bg-gray-700 rounded-full text-white" : "text-[#858080]"
+              }`}
+              onClick={() => handleRowClick(index)}
+            >
+              {index + 1}
             </div>
-          )}
-
+            
+            <div className="flex items-center justify-center">
+              <CameraImageCell
+                item={item}
+                handleImageClick={handleImageClick}
+                formatTimestamp={formatTimestamp}
+              />
+            </div>
+            
+            <div className="flex items-center justify-center">
+              <FormImageCell
+                item={item}
+                handleImageClick={handleImageClick}
+                formatTimestamp={formatTimestamp}
+              />
+            </div>
+            
+            <div className="flex items-center justify-center">
+              <img
+                src={boxImportant}
+                alt="Details Icon"
+                className="w-6 h-6 mr-2 cursor-pointer"
+                onClick={() => handleDetailsIconClick(index)}
+              />
+              <p 
+                className="text-sm text-[#858080] cursor-pointer" 
+                onClick={() => handleDetailsIconClick(index)}
+              >
+                Details
+              </p>
+            </div>
+            
+            <div className="text-center">
+              <button
+                className={`px-4 py-2 rounded-full text-white font-montserrat text-[8px] ${
+                  item.status === "CLAIMED" ? "bg-[#339265]" : "bg-[#A14342]"
+                }`}
+              >
+                {item.status}
+              </button>
+            </div>
+          </div>
+        ))
+    ) : (
+      <div className="text-center text-[#858080] py-4">No items in this box</div>
+    )}
+  </div>
+)}
           {/* Image Pop-up */}
           {popUpImage && (
             <div
@@ -959,7 +1101,6 @@ useEffect(() => {
           )}
         </div>
       </div>
-    </div>
   );
 };
 export default Monitoring;
