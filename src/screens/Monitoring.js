@@ -7,8 +7,8 @@ import { getStorage, ref as storageRef, getDownloadURL, listAll } from "firebase
 
 // Image imports
 import dashboard from "./dashboard.png";
-import dataCenter from "./data-center.png";
-import futures from "./futures.png";
+import dataCenter from "./monitoring.png";
+import futures from "./ads.png";
 import lineChart from "./line-chart.png";
 import tasks from "./tasks.png";
 import logout from "./logout.png";
