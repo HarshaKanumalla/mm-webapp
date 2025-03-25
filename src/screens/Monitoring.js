@@ -139,9 +139,9 @@ const ImageAnalysisDisplay = React.memo(({ imageUrl, timestamp, boxId }) => {
   if (results.length === 0) return null;
 
   return (
-    <div className="mt-1 max-w-[180px]">
+    <div className="mt-1 max-w-[135px]">
       {results.map((result, index) => (
-        <div key={index} className="text-xs text-[#858080] leading-4">{result}</div>
+        <div key={index} className="text-[9px] text-[#858080] leading-3">{result}</div>
       ))}
     </div>
   );
@@ -149,7 +149,7 @@ const ImageAnalysisDisplay = React.memo(({ imageUrl, timestamp, boxId }) => {
 
 // Reusable CheckIcon for the progress indicators with proper styling
 const CheckIcon = ({ isActive }) => (
-  <div className={`rounded-full w-10 h-10 flex items-center justify-center ${isActive ? "bg-white border-2 border-[#2A9D8F]" : "border border-gray-300"}`}>
+  <div className={`rounded-full w-7.5 h-7.5 flex items-center justify-center ${isActive ? "bg-white border-2 border-[#2A9D8F]" : "border border-gray-300"}`}>
     {isActive && (
       <svg 
         xmlns="http://www.w3.org/2000/svg" 
@@ -159,7 +159,7 @@ const CheckIcon = ({ isActive }) => (
         strokeWidth="2.5" 
         strokeLinecap="round" 
         strokeLinejoin="round" 
-        className="w-5 h-5"
+        className="w-4 h-4"
       >
         <polyline points="20 6 9 17 4 12" />
       </svg>
@@ -173,10 +173,10 @@ const NavItem = ({ iconSrc, label, isActive, onClick }) => (
     className={`flex flex-col items-center cursor-pointer ${isActive ? 'text-[#00a896]' : 'text-gray-400'}`}
     onClick={onClick}
   >
-    <div className="w-12 h-12 flex items-center justify-center mb-1">
-      <img src={iconSrc} alt={label} className="w-10 h-10" />
+    <div className="w-9 h-9 flex items-center justify-center mb-1">
+      <img src={iconSrc} alt={label} className="w-7.5 h-7.5" />
     </div>
-    <span className="text-xs">{label}</span>
+    <span className="text-[9px]">{label}</span>
   </div>
 );
 
@@ -707,7 +707,7 @@ export const Monitoring = () => {
     const selectedRow = activeRow !== null && boxDetails[selectedBox]?.middleContent[activeRow];
     
     return (
-      <div className="flex justify-center items-center gap-10 px-4">
+      <div className="flex justify-center items-center gap-8 px-3">
         {[
           { key: 'doorOpened', label: 'Door opened' },
           { key: 'imageCaptured', label: 'Camera Image captured' },
@@ -720,7 +720,7 @@ export const Monitoring = () => {
           return (
             <div key={key} className="flex flex-col items-center">
               <CheckIcon isActive={isActive} />
-              <span className="text-sm mt-2">{label}</span>
+              <span className="text-xs mt-1.5">{label}</span>
             </div>
           );
         })}
@@ -815,31 +815,31 @@ export const Monitoring = () => {
   return (
     <div className="min-h-screen bg-white">
       {/* Top Navigation Bar */}
-      <header className="py-3 px-6 flex items-center justify-between">
-        <div className="flex items-center ml-2">
-          <img src={mmlogo} alt="Missing Matters" className="h-12 w-auto mr-2" /> {/* Increased logo size by 1.25x */}
-          <h1 className="text-[#2A9D8F] font-semibold text-2xl">Missing Matters</h1>
+      <header className="py-2 px-4 flex items-center justify-between">
+        <div className="flex items-center ml-1.5">
+          <img src={mmlogo} alt="Missing Matters" className="h-9 w-auto mr-1.5" />
+          <h1 className="text-[#2A9D8F] font-semibold text-lg">Missing Matters</h1>
         </div>
         
-        <div className="flex items-center space-x-4">
+        <div className="flex items-center space-x-3">
           {/* Location Dropdown */}
           <div className="relative">
             <div 
-              className="px-4 py-2 border border-[#858080] rounded-full flex items-center space-x-2 cursor-pointer location-button"
+              className="px-3 py-1.5 border border-[#858080] rounded-full flex items-center space-x-1.5 cursor-pointer location-button"
               onClick={() => setShowLocationDropdown(!showLocationDropdown)}
             >
-              <span className="text-[#3C3B3B]">{selectedLocation.label}</span>
-              <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4 text-[#3C3B3B]" viewBox="0 0 20 20" fill="currentColor">
+              <span className="text-[#3C3B3B] text-xs">{selectedLocation.label}</span>
+              <svg xmlns="http://www.w3.org/2000/svg" className="h-3 w-3 text-[#3C3B3B]" viewBox="0 0 20 20" fill="currentColor">
                 <path fillRule="evenodd" d="M5.293 7.293a1 1 0 011.414 0L10 10.586l3.293-3.293a1 1 0 111.414 1.414l-4 4a1 1 0 01-1.414 0l-4-4a1 1 0 010-1.414z" clipRule="evenodd" />
               </svg>
             </div>
             
             {showLocationDropdown && (
-              <div className="absolute mt-1 w-48 bg-white border border-gray-300 rounded-md shadow-lg z-20 location-dropdown">
+              <div className="absolute mt-1 w-36 bg-white border border-gray-300 rounded-md shadow-lg z-20 location-dropdown">
                 {locationOptions.map(location => (
                   <div 
                     key={location.id} 
-                    className="px-4 py-2 hover:bg-gray-100 cursor-pointer"
+                    className="px-3 py-1.5 hover:bg-gray-100 cursor-pointer text-xs"
                     onClick={() => handleLocationSelect(location)}
                   >
                     {location.label}
@@ -852,23 +852,23 @@ export const Monitoring = () => {
           {/* Smart Box Dropdown */}
           <div className="relative">
             <div 
-              className="px-4 py-2 border border-[#858080] rounded-full flex items-center space-x-2 cursor-pointer smart-box-button"
+              className="px-3 py-1.5 border border-[#858080] rounded-full flex items-center space-x-1.5 cursor-pointer smart-box-button"
               onClick={() => setShowSmartBoxDropdown(!showSmartBoxDropdown)}
             >
-              <span className="text-[#3C3B3B]">
+              <span className="text-[#3C3B3B] text-xs">
                 {selectedBox ? `HN ${selectedBox}` : "Smart Box"}
               </span>
-              <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4 text-[#3C3B3B]" viewBox="0 0 20 20" fill="currentColor">
+              <svg xmlns="http://www.w3.org/2000/svg" className="h-3 w-3 text-[#3C3B3B]" viewBox="0 0 20 20" fill="currentColor">
                 <path fillRule="evenodd" d="M5.293 7.293a1 1 0 011.414 0L10 10.586l3.293-3.293a1 1 0 111.414 1.414l-4 4a1 1 0 01-1.414 0l-4-4a1 1 0 010-1.414z" clipRule="evenodd" />
               </svg>
             </div>
             
             {showSmartBoxDropdown && (
-              <div className="absolute mt-1 w-48 bg-white border border-gray-300 rounded-md shadow-lg z-20 smart-box-dropdown">
+              <div className="absolute mt-1 w-36 bg-white border border-gray-300 rounded-md shadow-lg z-20 smart-box-dropdown">
                 {smartBoxOptions.map(option => (
                   <div 
                     key={option.id} 
-                    className="px-4 py-2 hover:bg-gray-100 cursor-pointer"
+                    className="px-3 py-1.5 hover:bg-gray-100 cursor-pointer text-xs"
                     onClick={() => handleSmartBoxSelect(option.id)}
                   >
                     {option.label}
@@ -885,31 +885,31 @@ export const Monitoring = () => {
               placeholder="Search"
               value={searchText}
               onChange={(e) => setSearchText(e.target.value)}
-              className="px-4 py-2 border border-[#858080] rounded-full w-64 pl-10 text-[#3C3B3B] placeholder-[#3C3B3B]"
+              className="px-3 py-1.5 border border-[#858080] rounded-full w-48 pl-7 text-[#3C3B3B] placeholder-[#3C3B3B] text-xs"
             />
-            <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5 text-[#3C3B3B] absolute left-3 top-2.5" viewBox="0 0 20 20" fill="currentColor">
+            <svg xmlns="http://www.w3.org/2000/svg" className="h-3.5 w-3.5 text-[#3C3B3B] absolute left-2 top-2" viewBox="0 0 20 20" fill="currentColor">
               <path fillRule="evenodd" d="M8 4a4 4 0 100 8 4 4 0 000-8zM2 8a6 6 0 1110.89 3.476l4.817 4.817a1 1 0 01-1.414 1.414l-4.816-4.816A6 6 0 012 8z" clipRule="evenodd" />
             </svg>
           </div>
           
           {/* Notifications */}
           <div className="relative">
-            <svg xmlns="http://www.w3.org/2000/svg" className="h-6 w-6 text-gray-500" viewBox="0 0 20 20" fill="currentColor">
+            <svg xmlns="http://www.w3.org/2000/svg" className="h-4.5 w-4.5 text-gray-500" viewBox="0 0 20 20" fill="currentColor">
               <path d="M10 2a6 6 0 00-6 6v3.586l-.707.707A1 1 0 004 14h12a1 1 0 00.707-1.707L16 11.586V8a6 6 0 00-6-6zM10 18a3 3 0 01-3-3h6a3 3 0 01-3 3z" />
             </svg>
           </div>
           
-          {/* User Profile with MM instead of JS - Increased size */}
-          <div className="w-10 h-10 rounded-full bg-[#2A9D8F] flex items-center justify-center text-[#FFFFFF]">
+          {/* User Profile with MM instead of JS - Increased to w-12 h-12 */}
+          <div className="w-12 h-12 rounded-full bg-[#2A9D8F] flex items-center justify-center text-[#FFFFFF]">
             <span className="text-sm font-medium">MM</span>
           </div>
         </div>
       </header>
 
-      {/* Left Navigation - Positioned more to the left but still centered vertically with reduced spacing */}
-      <div className="fixed left-4 w-14 flex flex-col items-center justify-center" 
+      {/* Left Navigation - Moved slightly to the right */}
+      <div className="fixed left-3 w-10.5 flex flex-col items-center justify-center z-10" 
            style={{top: '50%', transform: 'translateY(-50%)', height: 'auto'}}>
-        <div className="flex flex-col items-center justify-center space-y-4">
+        <div className="flex flex-col items-center justify-center space-y-3">
           <NavItem 
             iconSrc={dashboard} 
             label="Dashboard" 
@@ -937,40 +937,64 @@ export const Monitoring = () => {
         </div>
       </div>
 
+      <div className="container mx-auto px-3 pt-6 pb-2">
+        <div className="flex justify-center mt-2 mb-4">
+          {/* Progress indicators with increased spacing */}
+          <div className="flex space-x-20">
+            {[
+              { key: 'doorOpened', label: 'Door opened' },
+              { key: 'imageCaptured', label: 'Camera Image captured' },
+              { key: 'qrDisplayed', label: 'QR Displayed' },
+              { key: 'sentToCloud', label: 'Sent to Cloud' },
+              { key: 'formSubmitted', label: 'Form Submitted' }
+            ].map(({ key, label }) => {
+              const isActive = activeRow !== null && boxDetails[selectedBox]?.middleContent[activeRow]?.bottomActions?.[key] || false;
+              
+              return (
+                <div key={key} className="flex items-center">
+                  <div className={`h-5 w-5 rounded-full ${isActive ? 'bg-[#2A9D8F]' : 'bg-gray-200'} flex items-center justify-center`}>
+                    {isActive && (
+                      <svg xmlns="http://www.w3.org/2000/svg" className="h-3 w-3 text-white" viewBox="0 0 20 20" fill="currentColor">
+                        <path fillRule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clipRule="evenodd" />
+                      </svg>
+                    )}
+                  </div>
+                  <span className="ml-2 text-xs">{label}</span>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      </div>
+
       {/* Main Content */}
-      <div className="container mx-auto px-4 py-4"> {/* Reduced padding to move table slightly left */}
+      <div className="container mx-auto px-3 pt-3 pb-3"> {/* Adjusted padding */}
         <div className="flex">
           {/* Left Navigation placeholder to maintain layout with fixed sidebar */}
-          <div className="w-14 invisible">
+          <div className="w-16 invisible">
             {/* Placeholder */}
           </div>
 
           {/* Main Content Area */}
-          <div className="flex-1 ml-4 flex flex-col h-[calc(100vh-120px)]"> {/* Reduced margin to move table slightly left */}
+          <div className="flex-1 flex flex-col h-[calc(100vh-180px)]"> {/* Reduced height by another 10% */}
             {/* Main Table with full height, rounded corners and drop shadow */}
-            <div className="border border-[#D3D4D4] rounded-[25px] overflow-auto shadow-lg flex flex-col h-full" 
-                 style={{boxShadow: '0 10px 15px -3px rgba(0, 0, 0, 0.1), 0 4px 6px -2px rgba(0, 0, 0, 0.05)'}}>
+            <div className="border border-[#D3D4D4] rounded-[18px] overflow-auto shadow-lg flex flex-col h-full" 
+                 style={{boxShadow: '0 7px 11px -2px rgba(0, 0, 0, 0.1), 0 3px 5px -2px rgba(0, 0, 0, 0.05)'}}>
               <table className="w-full border-collapse">
                 <thead className="sticky top-0 bg-[#2A9D8F] border-b border-[#D3D4D4]">
                   <tr>
-                    <th className="py-3 px-4 text-center font-medium text-white border-r border-[#D3D4D4] text-sm">S. NO</th>
-                    <th className="py-3 px-4 text-center font-medium text-white border-r border-[#D3D4D4] w-[12%] text-sm">CAMERA IMAGE</th>
-                    <th className="py-3 px-4 text-center font-medium text-white border-r border-[#D3D4D4] text-sm">CAMERA IMAGE DESCRIPTION</th>
-                    <th className="py-3 px-4 text-center font-medium text-white border-r border-[#D3D4D4] w-[12%] text-sm">FORM IMAGE</th>
-                    <th className="py-3 px-4 text-center font-medium text-white border-r border-[#D3D4D4] text-sm">FORM IMAGE DESCRIPTION</th>
-                    <th className="py-3 px-4 text-center font-medium text-white border-r border-[#D3D4D4] text-sm">FORM DETAILS</th>
-                    <th className="py-3 px-4 text-center font-medium text-white border-r border-[#D3D4D4] text-sm">CHATBOT DETAILS</th>
-                    <th className="py-3 px-4 text-center font-medium text-white border-r border-[#D3D4D4] w-[8%] text-sm">MATCHING PERCENTAGE</th>
-                    <th className="py-3 px-4 text-center font-medium text-white text-sm">STATUS</th>
+                    <th className="py-2 px-3 text-center font-medium text-white border-r border-[#D3D4D4] text-[10px]">S. NO</th>
+                    <th className="py-2 px-3 text-center font-medium text-white border-r border-[#D3D4D4] w-[12%] text-[10px]">CAMERA IMAGE</th>
+                    <th className="py-2 px-3 text-center font-medium text-white border-r border-[#D3D4D4] text-[10px]">CAMERA IMAGE DESCRIPTION</th>
+                    <th className="py-2 px-3 text-center font-medium text-white border-r border-[#D3D4D4] w-[12%] text-[10px]">FORM IMAGE</th>
+                    <th className="py-2 px-3 text-center font-medium text-white border-r border-[#D3D4D4] text-[10px]">FORM IMAGE DESCRIPTION</th>
+                    <th className="py-2 px-3 text-center font-medium text-white border-r border-[#D3D4D4] text-[10px]">FORM DETAILS</th>
+                    <th className="py-2 px-3 text-center font-medium text-white border-r border-[#D3D4D4] text-[10px]">CHATBOT DETAILS</th>
+                    <th className="py-2 px-3 text-center font-medium text-white border-r border-[#D3D4D4] w-[8%] text-[10px]">MATCHING PERCENTAGE</th>
+                    <th className="py-2 px-3 text-center font-medium text-white text-[10px]">STATUS</th>
                   </tr>
                 </thead>
                 <tbody>
-                  {/* Process Indicators Row with added vertical spacing */}
-                  <tr>
-                    <td colSpan="9" className="py-8">
-                      {renderProcessIndicators()}
-                    </td>
-                  </tr>
                   
                   {/* Data Rows - Using real data from the state with Firebase monitoring */}
                   {!isLoading && selectedBox && boxDetails[selectedBox]?.middleContent?.map((item, index) => (
@@ -979,21 +1003,21 @@ export const Monitoring = () => {
                       className={`border-t border-[#D3D4D4] ${activeRow === index ? 'bg-gray-100' : ''}`} 
                       onClick={() => handleRowClick(index)}
                     >
-                      <td className="py-4 px-4 text-center">{index + 1}.</td>
-                      <td className="py-4 px-4 text-center">
+                      <td className="py-3 px-3 text-center text-xs">{index + 1}.</td>
+                      <td className="py-3 px-3 text-center">
                         <div className="flex flex-col items-center">
                           <img 
                             src={item.cameraImage !== '-' ? item.cameraImage : DEFAULT_IMAGE} 
                             alt="Camera" 
-                            className="w-16 h-14 rounded object-cover cursor-pointer"
+                            className="w-12 h-10.5 rounded object-cover cursor-pointer"
                             onClick={(e) => handleImageClick(item.cameraImage, e)}
                           />
-                          <div className="text-xs text-gray-500 mt-1 text-center">
+                          <div className="text-[9px] text-gray-500 mt-0.5 text-center">
                             {formatTimestamp(item.timestamp)}
                           </div>
                         </div>
                       </td>
-                      <td className="py-4 px-4 text-center">
+                      <td className="py-3 px-3 text-center">
                         <div className="flex flex-col items-center">
                           <ImageAnalysisDisplay 
                             imageUrl={item.cameraImage} 
@@ -1002,12 +1026,12 @@ export const Monitoring = () => {
                           />
                         </div>
                       </td>
-                      <td className="py-4 px-4 text-center">
+                      <td className="py-3 px-3 text-center">
                         <div className="flex flex-col items-center">
                           <img 
                             src={item.formImageUrl !== '-' ? item.formImageUrl : DEFAULT_IMAGE} 
                             alt="Form" 
-                            className="w-16 h-14 rounded object-cover cursor-pointer"
+                            className="w-12 h-10.5 rounded object-cover cursor-pointer"
                             onClick={(e) => handleImageClick(item.formImageUrl, e)}
                             onError={(e) => {
                               if (item.formImageUrl && item.formImageUrl.includes('drive.google.com')) {
@@ -1020,48 +1044,48 @@ export const Monitoring = () => {
                               }
                             }}
                           />
-                          <div className="text-xs text-gray-500 mt-1 text-center">
+                          <div className="text-[9px] text-gray-500 mt-0.5 text-center">
                             {item.bottomActions.formSubmitted ? formatTimestamp(item.timestamp) : '-'}
                           </div>
                         </div>
                       </td>
-                      <td className="py-4 px-4 text-center">
-                        <div className="text-xs">
+                      <td className="py-3 px-3 text-center">
+                        <div className="text-[9px]">
                           {item["Please describe the item"] !== '-' ? item["Please describe the item"] : 'No description available'}
                         </div>
                       </td>
-                      <td className="py-4 px-4 text-center">
+                      <td className="py-3 px-3 text-center">
                         <div className="flex flex-col items-center">
                           <img 
                             src={details} 
                             alt="Details" 
-                            className="w-6 h-6 cursor-pointer" 
+                            className="w-4.5 h-4.5 cursor-pointer" 
                             onClick={(e) => handleDetailsIconClick(index, e)}
                           />
-                          <div className="text-xs text-center text-gray-500 mt-1">
+                          <div className="text-[9px] text-center text-gray-500 mt-0.5">
                             {item.bottomActions.formSubmitted ? formatTimestamp(item.timestamp) : '-'}
                           </div>
                         </div>
                       </td>
-                      <td className="py-4 px-4 text-center">
+                      <td className="py-3 px-3 text-center">
                         <div className="flex flex-col items-center">
                           <img 
                             src={details} 
                             alt="Details" 
-                            className="w-6 h-6 cursor-pointer"
+                            className="w-4.5 h-4.5 cursor-pointer"
                           />
-                          <div className="text-xs text-center text-gray-500 mt-1">
+                          <div className="text-[9px] text-center text-gray-500 mt-0.5">
                             {item.bottomActions.formSubmitted ? formatTimestamp(item.timestamp) : '-'}
                           </div>
                         </div>
                       </td>
-                      <td className="py-4 px-4 text-center">
-                        <div className="text-xl font-semibold">
+                      <td className="py-3 px-3 text-center">
+                        <div className="text-base font-semibold">
                           {item.bottomActions.formSubmitted ? '93%' : '-'}
                         </div>
                       </td>
-                      <td className="py-4 px-4 text-center">
-                        <span className={`px-3 py-1 ${item.status === "CLAIMED" ? "bg-[#00a896]" : "bg-[#A14342]"} text-white text-xs rounded-full`}>
+                      <td className="py-3 px-3 text-center">
+                        <span className={`px-2 py-0.5 ${item.status === "CLAIMED" ? "bg-[#00a896]" : "bg-[#A14342]"} text-white text-[9px] rounded-full`}>
                           {item.status}
                         </span>
                       </td>
@@ -1069,12 +1093,12 @@ export const Monitoring = () => {
                   ))}
                   {isLoading && (
                     <tr>
-                      <td colSpan="9" className="py-8 text-center text-gray-500">Loading...</td>
+                      <td colSpan="9" className="py-6 text-center text-gray-500 text-xs">Loading...</td>
                     </tr>
                   )}
                   {!isLoading && (!selectedBox || !boxDetails[selectedBox]?.middleContent?.length) && (
                     <tr>
-                      <td colSpan="9" className="py-8 text-center text-gray-500">No items found</td>
+                      <td colSpan="9" className="py-6 text-center text-gray-500 text-xs">No items found</td>
                     </tr>
                   )}
                 </tbody>
@@ -1093,7 +1117,7 @@ export const Monitoring = () => {
           <img 
             src={popUpImage}
             alt="Popup"
-            className="max-w-2xl max-h-[80vh] rounded-md"
+            className="max-w-xl max-h-[60vh] rounded-md"
             onClick={(e) => e.stopPropagation()}
             onError={(e) => {
               if (popUpImage.includes('drive.google.com')) {
@@ -1112,18 +1136,18 @@ export const Monitoring = () => {
           onClick={closeDetailsPopup}
         >
           <div
-            className="bg-[#1E1E1E] p-6 rounded-[25px] shadow-lg text-[#858080] w-[400px]"
+            className="bg-[#1E1E1E] p-4.5 rounded-[18px] shadow-lg text-[#858080] w-[300px]"
             onClick={(e) => e.stopPropagation()}
           >
-            <div className="flex justify-between items-center mb-4">
-              <h2 className="text-xl font-semibold text-white">Form Details</h2>
+            <div className="flex justify-between items-center mb-3">
+              <h2 className="text-base font-semibold text-white">Form Details</h2>
               <button 
                 onClick={closeDetailsPopup}
                 className="text-white hover:text-gray-300 transition-colors duration-200"
               >
                 <svg
                   xmlns="http://www.w3.org/2000/svg"
-                  className="h-6 w-6"
+                  className="h-4.5 w-4.5"
                   fill="none"
                   viewBox="0 0 24 24"
                   stroke="currentColor"
@@ -1138,7 +1162,7 @@ export const Monitoring = () => {
               </button>
             </div>
             
-            <div className="space-y-3">
+            <div className="space-y-2">
               {[
                 { label: "Name", key: "Name" },
                 { label: "Phone Number", key: "Phone number" },
@@ -1148,9 +1172,9 @@ export const Monitoring = () => {
                 { label: "Item Location", key: "Where did you find the item?" },
                 { label: "Timestamp", key: "timestamp", formatter: formatTimestamp }
               ].map(({ label, key, formatter }) => (
-                <div key={key} className="border-b border-[#3C3B3B] pb-2">
-                  <p className="font-semibold text-white">{label}:</p>
-                  <p className="break-words">
+                <div key={key} className="border-b border-[#3C3B3B] pb-1.5">
+                  <p className="font-semibold text-white text-xs">{label}:</p>
+                  <p className="break-words text-xs">
                     {formatter 
                       ? formatter(boxDetails[selectedBox].middleContent[activeRow][key])
                       : boxDetails[selectedBox].middleContent[activeRow][key] || "Not Specified"}
