@@ -1,0 +1,1473 @@
+// Complete Missing Matters System
+// Integrates Twilio for WhatsApp, OpenAI for NLP, and Google Cloud Vision for image analysis
+
+const functions = require('firebase-functions');
+const admin = require('firebase-admin');
+const twilio = require('twilio');
+const { OpenAI } = require('openai');
+const { onObjectFinalized } = require('firebase-functions/v2/storage');
+
+// Set up error handling for uncaught exceptions
+process.on('uncaughtException', (err) => {
+  console.error('Uncaught exception:', err);
+});
+
+process.on('unhandledRejection', (reason, promise) => {
+  console.error('Unhandled Rejection at:', promise, 'reason:', reason);
+});
+
+// Map Firebase config to environment variables for services to use
+try {
+  const firebaseConfig = functions.config();
+  
+  // Map OpenAI configuration
+  if (firebaseConfig.openai && firebaseConfig.openai.apikey) {
+    process.env.OPENAI_API_KEY = firebaseConfig.openai.apikey;
+    console.log('OpenAI API key loaded from Firebase config');
+  } else {
+    console.warn('OpenAI API key not found in Firebase config');
+  }
+  
+  // Map Twilio configuration
+  if (firebaseConfig.twilio) {
+    if (firebaseConfig.twilio.account_sid) {
+      process.env.TWILIO_ACCOUNT_SID = firebaseConfig.twilio.account_sid;
+      console.log('Twilio Account SID loaded from Firebase config');
+    }
+    if (firebaseConfig.twilio.auth_token) {
+      process.env.TWILIO_AUTH_TOKEN = firebaseConfig.twilio.auth_token;
+      console.log('Twilio Auth Token loaded from Firebase config');
+    }
+    if (firebaseConfig.twilio.phone_number) {
+      process.env.TWILIO_PHONE_NUMBER = firebaseConfig.twilio.phone_number;
+      console.log('Twilio Phone Number loaded from Firebase config');
+    }
+  }
+} catch (error) {
+  console.error('Error loading Firebase config:', error);
+}
+
+// Initialize Firebase
+admin.initializeApp();
+
+// Initialize Twilio client with proper error handling
+let twilioClient;
+try {
+  if (process.env.TWILIO_ACCOUNT_SID && process.env.TWILIO_AUTH_TOKEN) {
+    twilioClient = twilio(
+      process.env.TWILIO_ACCOUNT_SID,
+      process.env.TWILIO_AUTH_TOKEN
+    );
+    console.log('Twilio client initialized successfully');
+  } else {
+    console.warn('Missing Twilio credentials. Twilio functionality will be limited.');
+  }
+} catch (error) {
+  console.error('Error initializing Twilio client:', error);
+}
+
+// Initialize OpenAI with proper error handling
+let openai;
+try {
+  if (process.env.OPENAI_API_KEY) {
+    openai = new OpenAI({
+      apiKey: process.env.OPENAI_API_KEY
+    });
+    console.log('OpenAI client initialized successfully');
+  } else {
+    console.warn('OPENAI_API_KEY not found. OpenAI functionality will be limited.');
+  }
+} catch (error) {
+  console.error('Error initializing OpenAI client:', error);
+}
+
+// Initialize Vision API with error handling
+let vision;
+try {
+  vision = new (require('@google-cloud/vision').ImageAnnotatorClient)();
+  console.log('Vision API client initialized successfully');
+} catch (error) {
+  console.error('Error initializing Vision API client:', error);
+}
+
+// Company information for reference
+const COMPANY_INFO = {
+  pmatts_description: `PMatts Private Limited is a leading technology innovation company transforming businesses through cutting-edge solutions in smart infrastructure, digital transformation, and security systems. Founded in 2010, PMatts has grown into a global technology leader with offices in 12 countries.
+
+Through our innovation arm, PMatts Catalysts, we pioneer advancements in AI, ML, IoT, and blockchain technology to create solutions that address real-world challenges.
+
+Our solutions deliver measurable impact:
+- 40% reduction in operational costs
+- 60% improvement in process efficiency
+- 75% increase in automation coverage
+- 30% energy savings across implementations
+- 90% enhancement in security threat detection
+
+PMatts serves clients across multiple industries including finance, healthcare, retail, and transportation.`,
+
+  missing_matters_info: `Missing Matters is our flagship lost and found platform designed to help people recover their lost items quickly and securely.
+
+Our platform works in three simple steps:
+1. Report your lost item with details and optional photos
+2. Our AI matching system scans all found items in the database
+3. When a match is found, the item is securely stored in a smart box for you to retrieve
+
+Missing Matters was founded in 2022 by the PMatts innovation team led by Dr. Sarah Johnson and has since helped thousands of people recover their valuable belongings with a 65% success rate - significantly higher than traditional lost and found systems.
+
+Some key statistics about Missing Matters:
+- Over 25,000 lost items successfully returned to owners
+- Average recovery time of just 48 hours
+- Available in 15 major cities across the country
+- Partnerships with 50+ major transportation hubs and shopping centers
+- Dedicated 24/7 customer support team`
+};
+
+// ---------- SESSION MANAGEMENT FUNCTIONS ---------- //
+
+async function getOrCreateSession(userPhone) {
+  const sessionRef = admin.database().ref(`sessions/${sanitizePhoneNumber(userPhone)}`);
+  const snapshot = await sessionRef.once('value');
+  let session = snapshot.val();
+
+  if (!session) {
+    session = {
+      userPhone,
+      conversationState: 'GREETING',
+      lastActivity: Date.now(),
+      messages: [],
+      lostItemReport: {}
+    };
+    await sessionRef.set(session);
+  }
+
+  return session;
+}
+
+async function updateSession(userPhone, updates) {
+  const sessionRef = admin.database().ref(`sessions/${sanitizePhoneNumber(userPhone)}`);
+  return sessionRef.update({
+    ...updates,
+    lastActivity: Date.now()
+  });
+}
+
+// Helper function to sanitize phone numbers for database keys
+function sanitizePhoneNumber(phone) {
+  return phone.replace(/[^\w]/g, '_');
+}
+
+// Generate reference numbers for lost item reports
+function generateReferenceNumber() {
+  const timestamp = Date.now().toString(36).toUpperCase();
+  const random = Math.random().toString(36).substring(2, 6).toUpperCase();
+  return `MM-${timestamp}-${random}`;
+}
+
+// ---------- VALIDATION FUNCTIONS ---------- //
+
+// Validate phone number format
+function isValidPhoneNumber(phone) {
+  // Basic validation for 10-digit number possibly with country code
+  const phoneRegex = /^\+?[0-9]{10,15}$/;
+  return phoneRegex.test(phone);
+}
+
+// Validate date and time format
+function isValidDateTimeFormat(dateTime) {
+  // Validate DD/MM/YYYY HH:MM format
+  const dateTimeRegex = /^(0[1-9]|[12][0-9]|3[01])\/(0[1-9]|1[012])\/\d{4} ([01][0-9]|2[0-3]):([0-5][0-9])$/;
+  return dateTimeRegex.test(dateTime);
+}
+
+// ---------- DATABASE FUNCTIONS ---------- //
+
+// Store lost item report in database
+async function storeLostItemReport(report) {
+  const reportRef = admin.database().ref('lostItems');
+  return reportRef.push(report);
+}
+
+// Store image URLs for lost item reports
+async function storeImageUrl(referenceNumber, imageUrl) {
+  const imageRef = admin.database().ref(`lostItemImages/${referenceNumber}`);
+  return imageRef.push({
+    url: imageUrl,
+    timestamp: Date.now()
+  });
+}
+
+// ---------- OPENAI INTEGRATION FUNCTIONS ---------- //
+
+// Use OpenAI to analyze item descriptions
+async function analyzeItemDescription(description) {
+  try {
+    if (!openai) {
+      console.warn('OpenAI client not initialized, skipping description analysis');
+      return {
+        isDetailedEnough: true, // Default to true when OpenAI is not available
+        feedback: 'Description analysis not available'
+      };
+    }
+
+    const completion = await openai.chat.completions.create({
+      model: 'gpt-4',
+      messages: [
+        {
+          role: 'system',
+          content: 'You are an AI assistant that helps analyze lost item descriptions. Your task is to determine if a description is detailed enough to help identify the item. A good description should include information about color, size, brand (if applicable), and distinctive features.'
+        },
+        {
+          role: 'user',
+          content: `Analyze this lost item description and determine if it's detailed enough: '${description}'`
+        }
+      ],
+      temperature: 0.3,
+      max_tokens: 150
+    });
+
+    const analysis = completion.choices[0].message.content;
+    const isDetailedEnough = !analysis.toLowerCase().includes('not detailed enough');
+    
+    return {
+      isDetailedEnough,
+      feedback: analysis
+    };
+  } catch (error) {
+    console.error('Error analyzing item description:', error);
+    return {
+      isDetailedEnough: true, // Default to true in case of API error
+      feedback: 'Could not analyze description due to technical issues.'
+    };
+  }
+}
+
+// Process user messages using OpenAI to understand intent
+async function processUserMessage(message, session) {
+  try {
+    if (!openai) {
+      console.warn('OpenAI client not initialized, using fallback intent detection');
+      return fallbackIntentDetection(message, session);
+    }
+
+    // Prepare conversation history for context
+    const conversationHistory = session.messages.slice(-5).map(msg => 
+      `${msg.role === 'user' ? 'User' : 'Assistant'}: ${msg.content}`
+    ).join('\n');
+
+    const completion = await openai.chat.completions.create({
+      model: 'gpt-4',
+      messages: [
+        {
+          role: 'system',
+          content: `You are an AI assistant for 'Missing Matters', a lost and found service by PMatts Private Limited. 
+          Your job is to analyze the user's message and extract their intent. The user is currently in the '${session.conversationState}' state.
+          
+          Only respond with one of these intent labels:
+          - GREETING: User is greeting or starting conversation
+          - LOST_ITEM: User wants to report a lost item
+          - COMPANY_INFO: User wants information about PMatts
+          - PROVIDE_NAME: User is providing their name
+          - PROVIDE_PHONE: User is providing their phone number
+          - PROVIDE_DESCRIPTION: User is describing their lost item
+          - PROVIDE_DATETIME: User is providing when they lost the item
+          - PROVIDE_LOCATION: User is providing where they lost the item
+          - MENU_SELECTION: User is selecting from menu options (1 or 2)
+          - SKIP_IMAGE: User wants to skip providing an image
+          - CHECK_STATUS: User wants to check the status of their report
+          - HELP: User needs help
+          - UNKNOWN: Cannot determine user intent
+          
+          Recent conversation:
+          ${conversationHistory}`
+        },
+        {
+          role: 'user',
+          content: message
+        }
+      ],
+      temperature: 0.1,
+      max_tokens: 50
+    });
+
+    return completion.choices[0].message.content.trim();
+  } catch (error) {
+    console.error('Error processing user message:', error);
+    return fallbackIntentDetection(message, session);
+  }
+}
+
+// Fallback intent detection when OpenAI is not available
+function fallbackIntentDetection(message, session) {
+  const lowerMessage = message.toLowerCase();
+  
+  // Simple pattern matching for common intents
+  if (/^(hi|hello|hey|greetings)/i.test(lowerMessage)) {
+    return 'GREETING';
+  }
+  
+  if (/lost|missing|find|found|report/i.test(lowerMessage)) {
+    return 'LOST_ITEM';
+  }
+  
+  if (/about|company|pmatts|info/i.test(lowerMessage)) {
+    return 'COMPANY_INFO';
+  }
+  
+  if (/^(1|one)$/i.test(lowerMessage)) {
+    return 'LOST_ITEM';
+  }
+  
+  if (/^(2|two)$/i.test(lowerMessage)) {
+    return 'COMPANY_INFO';
+  }
+  
+  if (/^(skip)$/i.test(lowerMessage)) {
+    return 'SKIP_IMAGE';
+  }
+  
+  // Check if it's likely a phone number
+  if (/\d{10}/.test(lowerMessage.replace(/\D/g, ''))) {
+    return 'PROVIDE_PHONE';
+  }
+  
+  // Check current conversation state for context
+  if (session.conversationState === 'COLLECT_NAME') {
+    return 'PROVIDE_NAME';
+  }
+  
+  if (session.conversationState === 'COLLECT_DESCRIPTION') {
+    return 'PROVIDE_DESCRIPTION';
+  }
+  
+  if (session.conversationState === 'COLLECT_DATETIME') {
+    return 'PROVIDE_DATETIME';
+  }
+  
+  if (session.conversationState === 'COLLECT_LOCATION') {
+    return 'PROVIDE_LOCATION';
+  }
+  
+  return 'UNKNOWN';
+}
+
+// Extract user name from message
+async function extractUserName(message) {
+  try {
+    if (!openai) {
+      console.warn('OpenAI client not initialized, using simple name extraction');
+      // Simple fallback: just use the first word if it looks like a name
+      const firstWord = message.trim().split(/\s+/)[0];
+      if (/^[A-Z][a-z]{2,}$/.test(firstWord)) {
+        return firstWord;
+      }
+      return null;
+    }
+
+    const completion = await openai.chat.completions.create({
+      model: 'gpt-4',
+      messages: [
+        {
+          role: 'system',
+          content: 'Extract only the name from the user\'s message. Return just the name, nothing else. If no clear name is found, return \'UNKNOWN\'.'
+        },
+        {
+          role: 'user',
+          content: message
+        }
+      ],
+      temperature: 0.1,
+      max_tokens: 50
+    });
+
+    const name = completion.choices[0].message.content.trim();
+    return name === 'UNKNOWN' ? null : name;
+  } catch (error) {
+    console.error('Error extracting user name:', error);
+    return null;
+  }
+}
+
+// Extract phone number from message
+function extractPhoneNumber(message) {
+  const phoneRegex = /(\+\d{1,3})?[\s-]?\(?(\d{3})\)?[\s-]?(\d{3})[\s-]?(\d{4})/;
+  const match = message.match(phoneRegex);
+  
+  if (match) {
+    let phoneNumber = match[0];
+    
+    // Ensure it has country code if not present
+    if (!phoneNumber.startsWith('+')) {
+      phoneNumber = '+1' + phoneNumber.replace(/\D/g, '').slice(-10);
+    }
+    
+    return phoneNumber;
+  }
+  
+  return null;
+}
+
+// Generate a response using OpenAI
+async function generateChatbotResponse(userMessage, session) {
+  const conversationState = session.conversationState;
+  const userName = session.userName || 'there';
+  
+  // First check if we need to handle the conversation via state machine
+  switch (conversationState) {
+    case 'GREETING':
+      if (session.userName) {
+        return `👋 Hi ${userName}! Welcome to Missing Matters. I'm here to help you recover lost items or brief you about our services. Please choose an option: 1. I lost something. 2. About PMatts Private Limited. (Type "1" or "2" to proceed)`;
+      } else {
+        return `👋 Hi! Welcome to Missing Matters. I'm here to help you recover lost items or brief you about our services. Before that could you please tell me your name?`;
+      }
+      
+    case 'MENU_PROMPT':
+      return `Please choose an option: 1. I lost something. 2. About PMatts Private Limited. (Type "1" or "2" to proceed)`;
+      
+    case 'COLLECT_NAME':
+      return `Could you please tell me your name?`;
+      
+    case 'COLLECT_PHONE':
+      return `Thanks ${userName}! Could you provide your phone number so we can contact you about your lost item?`;
+      
+    case 'COLLECT_DESCRIPTION':
+      return `Can you describe the lost item? For example, its color, size, or any unique features it may have.`;
+      
+    case 'COLLECT_DATETIME':
+      return `Thanks for providing the details, ${userName}! Can you please tell me when did you lose the item? Please use the format DD/MM/YYYY HH:MM (for example, 25/04/2025 14:30).`;
+      
+    case 'COLLECT_LOCATION':
+      return `Can you please tell me where did you lose the item?`;
+      
+    case 'COLLECT_IMAGE':
+      return `Can you please share any images of the item? You can type 'skip' if you don't have any.`;
+      
+    case 'PROVIDE_REFERENCE':
+      const referenceNumber = session.lostItemReport.referenceNumber;
+      return `Thank you for providing the details. Your report has been recorded. Your reference number is ${referenceNumber}. We will notify you if any matching item is found. You can check the status anytime by referring to this number.`;
+      
+    default:
+      // Use OpenAI for dynamic conversation if available
+      try {
+        if (!openai) {
+          return fallbackChatbotResponse(userMessage, session);
+        }
+
+        // Prepare conversation history for context
+        const conversationHistory = session.messages.slice(-5).map(msg => 
+          `${msg.role === 'user' ? 'User' : 'Assistant'}: ${msg.content}`
+        ).join('\n');
+        
+        const completion = await openai.chat.completions.create({
+          model: 'gpt-4',
+          messages: [
+            {
+              role: 'system',
+              content: `You are Emma, the WhatsApp chatbot for 'Missing Matters', a lost and found service by PMatts Private Limited.
+              
+              IMPORTANT GUIDELINES:
+              1. Your primary purpose is to help users report lost items or provide information about PMatts.
+              2. DO NOT answer questions outside these two domains.
+              3. If users ask about other topics, politely redirect them to lost items reporting or company information.
+              4. Keep responses concise and friendly.
+              5. Always stay in character as Emma from Missing Matters.
+              
+              About PMatts: ${COMPANY_INFO.pmatts_description}
+              
+              About Missing Matters: ${COMPANY_INFO.missing_matters_info}
+              
+              Current conversation state: ${session.conversationState}
+              User name: ${session.userName || 'Unknown'}
+              
+              Recent conversation:
+              ${conversationHistory}`
+            },
+            {
+              role: 'user',
+              content: userMessage
+            }
+          ],
+          temperature: 0.7,
+          max_tokens: 200
+        });
+        
+        return completion.choices[0].message.content.trim();
+      } catch (error) {
+        console.error('Error generating response with OpenAI:', error);
+        return fallbackChatbotResponse(userMessage, session);
+      }
+  }
+}
+
+// Fallback chatbot response when OpenAI is not available
+function fallbackChatbotResponse(userMessage, session) {
+  const userName = session.userName || 'there';
+  
+  // Simple fallback responses
+  const lowerMessage = userMessage.toLowerCase();
+  
+  if (/about|company|pmatts|what is/i.test(lowerMessage)) {
+    return COMPANY_INFO.pmatts_description;
+  }
+  
+  if (/lost|missing|find|found|report/i.test(lowerMessage)) {
+    return `I can help you report a lost item, ${userName}. Let's gather some information to help you find it.`;
+  }
+  
+  return `Hi ${userName}! I'm here to help you report lost items or learn about PMatts Private Limited. What would you like to do today?`;
+}
+
+// Handle invalid responses with specific guidance
+function handleInvalidResponse(session, errorType) {
+  const userName = session.userName || 'there';
+  
+  switch (errorType) {
+    case 'PHONE_FORMAT':
+      return `I'm sorry, ${userName}, that doesn't seem to be a valid phone number. Please provide a 10-digit phone number, optionally with a country code (e.g., +1 for US/Canada).`;
+      
+    case 'DESCRIPTION_TOO_VAGUE':
+      return `I need a bit more detail about your item, ${userName}. Please describe its color, size, shape, brand (if applicable), and any distinctive features that would help identify it.`;
+      
+    case 'DATETIME_FORMAT':
+      return `Please provide the date and time in the format DD/MM/YYYY HH:MM (for example, 25/04/2025 14:30).`;
+      
+    case 'MENU_SELECTION':
+      return `I'm sorry, I didn't understand that. Please type "1" to report a lost item, or "2" to know more about PMatts Private Limited.`;
+      
+    default:
+      return `I'm sorry, I didn't understand that. Could you please try again?`;
+  }
+}
+
+// ---------- WHATSAPP WEBHOOK FUNCTION ---------- //
+
+// Main webhook to handle incoming WhatsApp messages
+exports.whatsappWebhook = functions.https.onRequest(async (req, res) => {
+  try {
+    // Extract message details from Twilio request
+    const incomingMessage = req.body.Body || '';
+    const userPhone = req.body.From || '';
+    const hasMedia = req.body.NumMedia && parseInt(req.body.NumMedia) > 0;
+    const mediaUrl = hasMedia ? req.body.MediaUrl0 : null;
+    
+    console.log(`Received message from ${userPhone}: ${incomingMessage}`);
+    
+    // Get or create user session
+    const session = await getOrCreateSession(userPhone);
+    
+    // Add message to conversation history
+    if (!session.messages) {
+      session.messages = [];
+    }
+    
+    session.messages.push({
+      role: 'user',
+      content: incomingMessage,
+      timestamp: Date.now()
+    });
+    
+    // Limit conversation history to last 20 messages
+    if (session.messages.length > 20) {
+      session.messages = session.messages.slice(-20);
+    }
+    
+    // Process the media if present
+    if (hasMedia && mediaUrl) {
+      if (session.conversationState === 'COLLECT_IMAGE' && session.lostItemReport && session.lostItemReport.referenceNumber) {
+        await storeImageUrl(session.lostItemReport.referenceNumber, mediaUrl);
+        
+        // Update session with image information
+        if (!session.lostItemReport.images) {
+          session.lostItemReport.images = [];
+        }
+        session.lostItemReport.images.push(mediaUrl);
+        
+        // Move to providing reference number
+        session.conversationState = 'PROVIDE_REFERENCE';
+      }
+    }
+    
+    // Process user message and determine intent
+    const userIntent = await processUserMessage(incomingMessage, session);
+    console.log(`Detected user intent: ${userIntent}`);
+    
+    // Handle conversation based on current state and user intent
+    let responseMessage;
+    let stateUpdates = {};
+    
+    // Main state machine
+    switch (session.conversationState) {
+      case 'GREETING':
+        if (userIntent === 'PROVIDE_NAME') {
+          const extractedName = await extractUserName(incomingMessage);
+          if (extractedName) {
+            stateUpdates.userName = extractedName;
+            stateUpdates.conversationState = 'MENU_PROMPT';
+          } else {
+            stateUpdates.conversationState = 'COLLECT_NAME';
+          }
+        } else if (userIntent === 'LOST_ITEM') {
+          stateUpdates.conversationState = 'COLLECT_NAME';
+          if (!session.lostItemReport) {
+            stateUpdates.lostItemReport = {};
+          }
+        } else if (userIntent === 'COMPANY_INFO') {
+          responseMessage = COMPANY_INFO.pmatts_description;
+        } else {
+          stateUpdates.conversationState = 'COLLECT_NAME';
+        }
+        break;
+        
+      case 'COLLECT_NAME':
+        const extractedName = await extractUserName(incomingMessage);
+        if (extractedName) {
+          stateUpdates.userName = extractedName;
+          if (!session.lostItemReport) {
+            stateUpdates.lostItemReport = {};
+          }
+          stateUpdates.lostItemReport.name = extractedName;
+          stateUpdates.conversationState = 'MENU_PROMPT';
+        }
+        break;
+        
+      case 'MENU_PROMPT':
+        if (userIntent === 'MENU_SELECTION' || incomingMessage === '1' || incomingMessage === '2') {
+          if (incomingMessage === '1' || userIntent === 'LOST_ITEM') {
+            if (!session.lostItemReport) {
+              stateUpdates.lostItemReport = { name: session.userName };
+            }
+            stateUpdates.conversationState = 'COLLECT_PHONE';
+          } else if (incomingMessage === '2' || userIntent === 'COMPANY_INFO') {
+            responseMessage = COMPANY_INFO.pmatts_description;
+            // Stay in the same state
+          } else {
+            responseMessage = handleInvalidResponse(session, 'MENU_SELECTION');
+          }
+        } else if (userIntent === 'LOST_ITEM') {
+          if (!session.lostItemReport) {
+            stateUpdates.lostItemReport = { name: session.userName };
+          }
+          stateUpdates.conversationState = 'COLLECT_PHONE';
+        } else if (userIntent === 'COMPANY_INFO') {
+          responseMessage = COMPANY_INFO.pmatts_description;
+          // Stay in the same state
+        } else {
+          responseMessage = handleInvalidResponse(session, 'MENU_SELECTION');
+        }
+        break;
+        
+      case 'COLLECT_PHONE':
+        if (userIntent === 'PROVIDE_PHONE') {
+          const phoneNumber = extractPhoneNumber(incomingMessage);
+          if (phoneNumber && isValidPhoneNumber(phoneNumber)) {
+            stateUpdates.lostItemReport = {
+              ...session.lostItemReport,
+              phone: phoneNumber
+            };
+            stateUpdates.conversationState = 'COLLECT_DESCRIPTION';
+          } else {
+            responseMessage = handleInvalidResponse(session, 'PHONE_FORMAT');
+          }
+        } else {
+          // Try to extract phone number anyway
+          const phoneNumber = extractPhoneNumber(incomingMessage);
+          if (phoneNumber && isValidPhoneNumber(phoneNumber)) {
+            stateUpdates.lostItemReport = {
+              ...session.lostItemReport,
+              phone: phoneNumber
+            };
+            stateUpdates.conversationState = 'COLLECT_DESCRIPTION';
+          } else {
+            responseMessage = handleInvalidResponse(session, 'PHONE_FORMAT');
+          }
+        }
+        break;
+        
+      case 'COLLECT_DESCRIPTION':
+        if (userIntent === 'PROVIDE_DESCRIPTION') {
+          // Analyze the description using OpenAI
+          const descriptionAnalysis = await analyzeItemDescription(incomingMessage);
+          
+          if (descriptionAnalysis.isDetailedEnough) {
+            stateUpdates.lostItemReport = {
+              ...session.lostItemReport,
+              description: incomingMessage
+            };
+            stateUpdates.conversationState = 'COLLECT_DATETIME';
+          } else {
+            responseMessage = handleInvalidResponse(session, 'DESCRIPTION_TOO_VAGUE');
+          }
+        } else {
+          // Still treat it as a description but analyze it
+          const descriptionAnalysis = await analyzeItemDescription(incomingMessage);
+          
+          if (descriptionAnalysis.isDetailedEnough) {
+            stateUpdates.lostItemReport = {
+              ...session.lostItemReport,
+              description: incomingMessage
+            };
+            stateUpdates.conversationState = 'COLLECT_DATETIME';
+          } else {
+            responseMessage = handleInvalidResponse(session, 'DESCRIPTION_TOO_VAGUE');
+          }
+        }
+        break;
+        
+      case 'COLLECT_DATETIME':
+        if (userIntent === 'PROVIDE_DATETIME') {
+          if (isValidDateTimeFormat(incomingMessage)) {
+            stateUpdates.lostItemReport = {
+              ...session.lostItemReport,
+              lostDateTime: incomingMessage
+            };
+            stateUpdates.conversationState = 'COLLECT_LOCATION';
+          } else {
+            responseMessage = handleInvalidResponse(session, 'DATETIME_FORMAT');
+          }
+        } else {
+          // Try to validate the format regardless of intent
+          if (isValidDateTimeFormat(incomingMessage)) {
+            stateUpdates.lostItemReport = {
+              ...session.lostItemReport,
+              lostDateTime: incomingMessage
+            };
+            stateUpdates.conversationState = 'COLLECT_LOCATION';
+          } else {
+            responseMessage = handleInvalidResponse(session, 'DATETIME_FORMAT');
+          }
+        }
+        break;
+        
+      case 'COLLECT_LOCATION':
+        if (userIntent === 'PROVIDE_LOCATION' || incomingMessage.length > 3) {
+          stateUpdates.lostItemReport = {
+            ...session.lostItemReport,
+            location: incomingMessage
+          };
+          stateUpdates.conversationState = 'COLLECT_IMAGE';
+        } else {
+          responseMessage = 'Please provide more details about where you lost the item.';
+        }
+        break;
+        
+      case 'COLLECT_IMAGE':
+        if (hasMedia && mediaUrl) {
+          // Process image upload
+          const referenceNumber = generateReferenceNumber();
+          
+          stateUpdates.lostItemReport = {
+            ...session.lostItemReport,
+            referenceNumber,
+            status: 'PENDING',
+            reportDate: Date.now(),
+            hasImage: true
+          };
+          
+          // Store the image URL
+          await storeImageUrl(referenceNumber, mediaUrl);
+          
+          // Store the report in the database
+          await storeLostItemReport(stateUpdates.lostItemReport);
+          
+          // Request image analysis for the uploaded image
+          // This will trigger the analyzeStorageImage function
+          const bucketName = new URL(mediaUrl).hostname;
+          const filePath = new URL(mediaUrl).pathname.substring(1); // Remove leading slash
+          
+          console.log(`Storing image for analysis: ${filePath}`);
+          
+          // Store report metadata with the uploaded image for reference
+          const storageImageRef = admin.database().ref(`images_to_analyze/${referenceNumber}`);
+          await storageImageRef.set({
+            mediaUrl,
+            bucketName,
+            filePath,
+            referenceNumber,
+            type: 'lost_item',
+            timestamp: Date.now()
+          });
+          
+          stateUpdates.conversationState = 'PROVIDE_REFERENCE';
+        } else if (userIntent === 'SKIP_IMAGE' || incomingMessage.toLowerCase() === 'skip') {
+          // Skip image and generate reference number
+          const referenceNumber = generateReferenceNumber();
+          
+          stateUpdates.lostItemReport = {
+            ...session.lostItemReport,
+            referenceNumber,
+            status: 'PENDING',
+            reportDate: Date.now(),
+            hasImage: false
+          };
+          
+          // Store the report in the database
+          await storeLostItemReport(stateUpdates.lostItemReport);
+          
+          stateUpdates.conversationState = 'PROVIDE_REFERENCE';
+        } else {
+          responseMessage = 'Please send an image of your item or type \'skip\' if you don\'t have any.';
+        }
+        break;
+        
+      case 'PROVIDE_REFERENCE':
+        // Reset after providing reference number
+        stateUpdates.conversationState = 'MENU_PROMPT';
+        break;
+        
+      default:
+        // Default handling
+        if (userIntent === 'GREETING') {
+          stateUpdates.conversationState = 'GREETING';
+        } else if (userIntent === 'LOST_ITEM') {
+          stateUpdates.conversationState = 'COLLECT_NAME';
+          stateUpdates.lostItemReport = {};
+        } else if (userIntent === 'COMPANY_INFO') {
+          responseMessage = COMPANY_INFO.pmatts_description;
+        }
+    }
+    
+    // Update session with any state changes
+    if (Object.keys(stateUpdates).length > 0) {
+      await updateSession(userPhone, stateUpdates);
+      
+      // Update session object with the changes
+      Object.assign(session, stateUpdates);
+    }
+    
+    // Generate response if not already set
+    if (!responseMessage) {
+      responseMessage = await generateChatbotResponse(incomingMessage, session);
+    }
+    
+    // Add response to conversation history
+    session.messages.push({
+      role: 'assistant',
+      content: responseMessage,
+      timestamp: Date.now()
+    });
+    
+    // Update session with the new message
+    await updateSession(userPhone, { messages: session.messages });
+    
+    // Send response via Twilio
+    if (twilioClient) {
+      const twiml = new twilio.twiml.MessagingResponse();
+      twiml.message(responseMessage);
+      
+      res.writeHead(200, { 'Content-Type': 'text/xml' });
+      res.end(twiml.toString());
+    } else {
+      // Fallback if Twilio is not initialized
+      console.warn('Twilio client not initialized, sending plain text response');
+      res.status(200).send(responseMessage);
+    }
+    
+  } catch (error) {
+    console.error('Error processing WhatsApp message:', error);
+    
+    try {
+      if (twilioClient) {
+        const twiml = new twilio.twiml.MessagingResponse();
+        twiml.message('I apologize, but I encountered an error processing your message. Please try again later.');
+        
+        res.writeHead(200, { 'Content-Type': 'text/xml' });
+        res.end(twiml.toString());
+      } else {
+        res.status(500).send('Error processing message');
+      }
+    } catch (responseError) {
+      console.error('Error sending error response:', responseError);
+      res.status(500).send('Error processing request');
+    }
+  }
+});
+
+// ---------- IMAGE ANALYSIS FUNCTIONS ---------- //
+
+/**
+ * Image analysis function - Triggers when new images are uploaded to storage
+ */
+exports.analyzeStorageImage = onObjectFinalized({
+  bucket: undefined, 
+  region: 'us-central1'
+}, async (event) => {
+  if (!vision) {
+    console.error('Vision API client initialization failed');
+    return null;
+  }
+
+  const object = event.data;
+  if (!object || !object.name) {
+    console.error('Invalid storage object received');
+    return null;
+  }
+
+  const filePath = object.name;
+  const fileName = filePath.split('/').pop();
+
+  // Define and check valid directories
+  const validDirectories = {
+    camera: 'missingmatters_photos/Camera_Images',
+    lost_items: 'lostItems'
+  };
+
+  let imageType = null;
+  let imageSource = null;
+  let referenceNumber = null;
+
+  // Check reference in images_to_analyze database
+  if (fileName) {
+    try {
+      const imagesRef = admin.database().ref('images_to_analyze');
+      const snapshot = await imagesRef.orderByChild('filePath').equalTo(filePath).once('value');
+      const imageData = snapshot.val();
+      
+      if (imageData) {
+        const data = Object.values(imageData)[0];
+        imageType = data.type;
+        imageSource = 'storage';
+        referenceNumber = data.referenceNumber;
+        console.log(`Found metadata for image: ${fileName}, type: ${imageType}, reference: ${referenceNumber}`);
+      }
+    } catch (err) {
+      console.error('Error checking image metadata:', err);
+    }
+  }
+
+  // Check if it's a camera image from storage
+  if (!imageType && filePath.includes(validDirectories.camera)) {
+    imageType = 'camera';
+    imageSource = 'storage';
+  } else if (!imageType && filePath.includes(validDirectories.lost_items)) {
+    imageType = 'lost_item';
+    imageSource = 'storage';
+  } else if (!imageType) {
+    // Check if it's a form image from Google Drive 
+    if (object.metadata?.formImageUrl) {
+      imageType = 'form';
+      imageSource = 'drive';
+    }
+  }
+
+  if (!imageType) {
+    console.log(`File ${fileName} not in monitored directories`);
+    return null;
+  }
+
+  try {
+    console.log(`Initiating analysis for ${imageType} image: ${fileName}`);
+    
+    // Handle different image sources
+    let imageUri;
+    
+    // For camera images, use the Cloud Storage path
+    if (imageSource === 'storage') {
+      imageUri = `gs://${object.bucket}/${filePath}`;
+    } 
+    // For form images, handle the Google Drive URL
+    else if (imageSource === 'drive') {
+      const driveUrl = object.metadata.formImageUrl;
+      if (!driveUrl) {
+        throw new Error('Form image URL not found in metadata');
+      }
+      
+      // Convert to direct download URL if it's a Google Drive link
+      if (driveUrl.includes('drive.google.com')) {
+        const fileId = driveUrl.match(/id=(.*?)(&|$)/)?.[1]; // Fixed regex extraction
+        if (fileId) {
+          imageUri = `https://drive.google.com/uc?id=${fileId}`;
+        } else {
+          throw new Error('Invalid Google Drive URL format');
+        }
+      } else {
+        imageUri = driveUrl;
+      }
+    }
+
+    // Define analysis configurations based on image type
+    const analysisConfig = {
+      camera: {
+        labelConfidenceThreshold: 85,
+        objectConfidenceThreshold: 75,
+        maxObjects: 20
+      },
+      form: {
+        labelConfidenceThreshold: 80,
+        objectConfidenceThreshold: 70,
+        maxObjects: 30
+      },
+      lost_item: {
+        labelConfidenceThreshold: 70,
+        objectConfidenceThreshold: 60,
+        maxObjects: 40
+      }
+    };
+
+    const config = analysisConfig[imageType] || analysisConfig.camera;
+
+    // Create vision API request options based on image source
+    const imageRequest = imageSource === 'storage' 
+      ? { image: { source: { imageUri } } }
+      : { image: { source: { imageUri } }, imageContext: { webDetection: { includeGeoResults: true } } };
+
+    // Perform comprehensive analysis
+    const [
+      labelResults,
+      objectResults,
+      textResults,
+      imageProperties,
+      safeSearchResults
+    ] = await Promise.all([
+      vision.labelDetection({
+        ...imageRequest,
+        imageContext: {
+          languageHints: ['en'],
+          productSearchParams: {
+            boundingPoly: null
+          }
+        }
+      }),
+      vision.objectLocalization({
+        ...imageRequest,
+        maxResults: config.maxObjects
+      }),
+      vision.textDetection({
+        ...imageRequest,
+        imageContext: {
+          languageHints: ['en']
+        }
+      }),
+      vision.imageProperties(imageRequest),
+      vision.safeSearchDetection(imageRequest)
+    ]);
+
+    // Process and format analysis results
+    const analysis = {
+      labels: labelResults[0].labelAnnotations
+        .map(label => ({
+          description: label.description,
+          confidence: (label.score * 100).toFixed(1),
+          topicality: label.topicality
+        }))
+        .filter(label => parseFloat(label.confidence) > config.labelConfidenceThreshold),
+
+      objects: objectResults[0].localizedObjectAnnotations
+      .map(obj => ({
+        name: obj.name,
+        confidence: (obj.score * 100).toFixed(1),
+        boundingBox: obj.boundingPoly.normalizedVertices
+      }))
+      .filter(obj => parseFloat(obj.confidence) > config.objectConfidenceThreshold),
+
+      colors: imageProperties[0].imagePropertiesAnnotation.dominantColors.colors
+        .map(color => ({
+          rgb: color.color,
+          score: (color.score * 100).toFixed(1),
+          pixelFraction: (color.pixelFraction * 100).toFixed(1)
+        }))
+        .slice(0, 5),
+
+      safeSearch: safeSearchResults[0].safeSearchAnnotation,
+
+      text: textResults[0]?.textAnnotations?.length > 0 
+        ? {
+          fullText: textResults[0].textAnnotations[0].description,
+          words: textResults[0].textAnnotations.slice(1).map(word => ({
+            text: word.description,
+            confidence: word.confidence,
+            location: word.boundingPoly.vertices
+          }))
+        }
+        : null,
+
+      quality: {
+        sharpness: imageProperties[0].imagePropertiesAnnotation.quality?.sharpness || 0,
+        brightness: imageProperties[0].imagePropertiesAnnotation.quality?.brightness || 0
+      }
+    };
+
+    // Extract key features for lost item matching
+    if (imageType === 'lost_item' && referenceNumber) {
+      // Create simplified feature set for matching algorithm
+      const itemFeatures = {
+        dominantColors: analysis.colors.slice(0, 3).map(c => c.rgb),
+        primaryObjects: analysis.objects.slice(0, 5).map(o => o.name),
+        keyLabels: analysis.labels.slice(0, 8).map(l => l.description),
+        textContent: analysis.text?.fullText || '',
+        referenceNumber: referenceNumber
+      };
+      
+      // Store features for lost item matching
+      const featuresRef = admin.database().ref(`lost_item_features/${referenceNumber}`);
+      await featuresRef.set(itemFeatures);
+      
+      console.log(`Stored matching features for lost item: ${referenceNumber}`);
+    }
+
+    // Store results in database with source information
+    const analysisRef = admin.database().ref('image_analysis').child(imageType);
+    const sanitizedFileName = fileName.replace(/[.#$[\]]/g, '_');
+
+    await analysisRef.child(sanitizedFileName).set({
+      analysis,
+      metadata: {
+        originalPath: filePath,
+        contentType: object.contentType,
+        timestamp: admin.database.ServerValue.TIMESTAMP,
+        size: object.size,
+        bucket: object.bucket,
+        imageSource: imageSource,
+        sourceUrl: imageUri,
+        referenceNumber: referenceNumber
+      }
+    });
+
+    console.log(`Successfully completed analysis for ${imageType} image: ${fileName}`);
+    return {
+      success: true,
+      analysisPath: `image_analysis/${imageType}/${sanitizedFileName}`
+    };
+
+  } catch (error) {
+    console.error(`Analysis failed for ${fileName}:`, error);
+
+    const errorRef = admin.database().ref('image_analysis_errors');
+    await errorRef.push({
+      fileName,
+      filePath,
+      imageType,
+      imageSource,
+      errorMessage: error.message,
+      timestamp: admin.database.ServerValue.TIMESTAMP
+    });
+
+    throw new functions.https.HttpsError('internal', 'Image analysis operation failed');
+  }
+});
+
+// ---------- ADDITIONAL UTILITY FUNCTIONS ---------- //
+
+/**
+ * Compare two lost item images for potential matches
+ * @param {string} referenceNumberA - First lost item reference number
+ * @param {string} referenceNumberB - Second lost item reference number
+ * @returns {Promise<Object>} - Similarity score and matching features
+ */
+async function compareLostItems(referenceNumberA, referenceNumberB) {
+  try {
+    const featuresRef = admin.database().ref('lost_item_features');
+    
+    // Get features for both items
+    const [snapshotA, snapshotB] = await Promise.all([
+      featuresRef.child(referenceNumberA).once('value'),
+      featuresRef.child(referenceNumberB).once('value')
+    ]);
+    
+    const featuresA = snapshotA.val();
+    const featuresB = snapshotB.val();
+    
+    if (!featuresA || !featuresB) {
+      return {
+        similarityScore: 0,
+        reason: 'One or both items don\'t have feature data'
+      };
+    }
+    
+    // Calculate similarity scores for different features
+    
+    // 1. Color similarity
+    let colorSimilarity = 0;
+    if (featuresA.dominantColors && featuresB.dominantColors) {
+      // Simple color matching based on RGB distance
+      const matchingColors = featuresA.dominantColors.filter(colorA => {
+        return featuresB.dominantColors.some(colorB => {
+          const distance = Math.sqrt(
+            Math.pow((colorA.r || 0) - (colorB.r || 0), 2) +
+            Math.pow((colorA.g || 0) - (colorB.g || 0), 2) +
+            Math.pow((colorA.b || 0) - (colorB.b || 0), 2)
+          );
+          return distance < 50; // Threshold for color similarity
+        });
+      });
+      
+      colorSimilarity = matchingColors.length / Math.max(featuresA.dominantColors.length, 1);
+    }
+    
+    // 2. Object similarity
+    let objectSimilarity = 0;
+    if (featuresA.primaryObjects && featuresB.primaryObjects) {
+      const matchingObjects = featuresA.primaryObjects.filter(obj => 
+        featuresB.primaryObjects.includes(obj)
+      );
+      
+      objectSimilarity = matchingObjects.length / Math.max(
+        Math.max(featuresA.primaryObjects.length, featuresB.primaryObjects.length), 1
+      );
+    }
+    
+    // 3. Label similarity
+    let labelSimilarity = 0;
+    if (featuresA.keyLabels && featuresB.keyLabels) {
+      const matchingLabels = featuresA.keyLabels.filter(label => 
+        featuresB.keyLabels.includes(label)
+      );
+      
+      labelSimilarity = matchingLabels.length / Math.max(
+        Math.max(featuresA.keyLabels.length, featuresB.keyLabels.length), 1
+      );
+    }
+    
+    // 4. Text similarity (if text is present)
+    let textSimilarity = 0;
+    if (featuresA.textContent && featuresB.textContent && 
+        featuresA.textContent.length > 0 && featuresB.textContent.length > 0) {
+      // Use OpenAI to compare text similarity if available
+      try {
+        if (openai) {
+          const completion = await openai.chat.completions.create({
+            model: 'gpt-4',
+            messages: [
+              {
+                role: 'system',
+                content: 'You are analyzing the similarity between text found in two images of potentially the same lost item. Return a similarity score between 0.0 and 1.0, where 1.0 means identical meaning and 0.0 means completely unrelated.'
+              },
+              {
+                role: 'user',
+                content: `Compare these two texts and return a similarity score between 0.0 and 1.0:\nText A: '${featuresA.textContent}'\nText B: '${featuresB.textContent}'`
+              }
+            ],
+            temperature: 0.1,
+            max_tokens: 50
+          });
+          
+          const scoreText = completion.choices[0].message.content;
+          const scoreMatch = scoreText.match(/(\d+(\.\d+)?)/);
+          if (scoreMatch) {
+            textSimilarity = parseFloat(scoreMatch[0]);
+          }
+        } else {
+          // Fallback to simple similarity if OpenAI is not available
+          const wordsA = featuresA.textContent.toLowerCase().split(/\W+/);
+          const wordsB = featuresB.textContent.toLowerCase().split(/\W+/);
+          const commonWords = wordsA.filter(word => wordsB.includes(word));
+          textSimilarity = commonWords.length / Math.max(Math.max(wordsA.length, wordsB.length), 1);
+        }
+      } catch (error) {
+        console.error('Error comparing text similarity:', error);
+        // Simple fallback on error
+        const wordsA = featuresA.textContent.toLowerCase().split(/\W+/);
+        const wordsB = featuresB.textContent.toLowerCase().split(/\W+/);
+        const commonWords = wordsA.filter(word => wordsB.includes(word));
+        textSimilarity = commonWords.length / Math.max(Math.max(wordsA.length, wordsB.length), 1);
+      }
+    }
+    
+    // Calculate weighted overall similarity
+    const weightedSimilarity = (
+      colorSimilarity * 0.3 +
+      objectSimilarity * 0.4 +
+      labelSimilarity * 0.2 +
+      textSimilarity * 0.1
+    );
+    
+    return {
+      similarityScore: weightedSimilarity,
+      details: {
+        colorSimilarity,
+        objectSimilarity,
+        labelSimilarity,
+        textSimilarity
+      },
+      matchingObjects: featuresA.primaryObjects?.filter(obj => featuresB.primaryObjects?.includes(obj)),
+      matchingLabels: featuresA.keyLabels?.filter(label => featuresB.keyLabels?.includes(label))
+    };
+    
+  } catch (error) {
+    console.error('Error comparing lost items:', error);
+    return {
+      similarityScore: 0,
+      reason: 'Error comparing items: ' + error.message
+    };
+  }
+}
+
+/**
+ * Find potential matches for a lost item based on image analysis
+ * @param {string} referenceNumber - The reference number of the lost item
+ * @returns {Promise<Array>} - Array of potential matches with similarity scores
+ */
+async function findPotentialMatches(referenceNumber) {
+  try {
+    // Get all lost item features
+    const featuresRef = admin.database().ref('lost_item_features');
+    const snapshot = await featuresRef.once('value');
+    const allFeatures = snapshot.val();
+    
+    if (!allFeatures || !allFeatures[referenceNumber]) {
+      return [];
+    }
+    
+    // No unused variable
+    const potentialMatches = [];
+    
+    // Compare against all other items
+    const otherReferenceNumbers = Object.keys(allFeatures).filter(ref => ref !== referenceNumber);
+    
+    for (const otherRef of otherReferenceNumbers) {
+      const similarity = await compareLostItems(referenceNumber, otherRef);
+      
+      if (similarity.similarityScore > 0.5) { // Threshold for potential match
+        potentialMatches.push({
+          referenceNumber: otherRef,
+          ...similarity
+        });
+      }
+    }
+    
+    // Sort by similarity score (highest first)
+    potentialMatches.sort((a, b) => b.similarityScore - a.similarityScore);
+    
+    return potentialMatches;
+  } catch (error) {
+    console.error('Error finding potential matches:', error);
+    return [];
+  }
+}
+
+/**
+ * Update a lost item report with potential matches
+ * Using the correct database trigger syntax for Firebase Functions
+ */
+exports.processPotentialMatches = functions.database.ref('/lost_item_features/{referenceNumber}')
+  .onCreate(async (snapshot, context) => {
+    const referenceNumber = context.params.referenceNumber;
+    
+    try {
+      console.log(`Finding potential matches for ${referenceNumber}`);
+      const potentialMatches = await findPotentialMatches(referenceNumber);
+      
+      if (potentialMatches.length > 0) {
+        // Update the lost item report with potential matches
+        const lostItemsRef = admin.database().ref('lostItems');
+        const itemSnapshot = await lostItemsRef.orderByChild('referenceNumber').equalTo(referenceNumber).once('value');
+        const itemData = itemSnapshot.val();
+        
+        if (itemData) {
+          const itemKey = Object.keys(itemData)[0];
+          await lostItemsRef.child(itemKey).update({
+            potentialMatches,
+            lastUpdated: Date.now()
+          });
+          
+          console.log(`Updated ${referenceNumber} with ${potentialMatches.length} potential matches`);
+          
+          // For high confidence matches, notify the user
+          const highConfidenceMatches = potentialMatches.filter(match => match.similarityScore > 0.8);
+          
+          if (highConfidenceMatches.length > 0 && itemData[itemKey].phone && twilioClient) {
+            // Send notification via WhatsApp
+            try {
+              // Make sure to use environment variables for Twilio phone number
+              const twilioPhoneNumber = process.env.TWILIO_PHONE_NUMBER;
+              
+              if (twilioPhoneNumber) {
+                await twilioClient.messages.create({
+                  body: `Good news! We've found a potential match for your lost item (reference: ${referenceNumber}). Please contact our support team for more information.`,
+                  from: `whatsapp:${twilioPhoneNumber}`,
+                  to: `whatsapp:${itemData[itemKey].phone}`
+                });
+                
+                console.log(`Sent match notification for ${referenceNumber} to ${itemData[itemKey].phone}`);
+              } else {
+                console.error('Twilio phone number not configured');
+              }
+            } catch (notifyError) {
+              console.error('Error sending notification:', notifyError);
+            }
+          }
+        }
+      } else {
+        console.log(`No potential matches found for ${referenceNumber}`);
+      }
+      
+      return { success: true, matchesFound: potentialMatches.length };
+    } catch (error) {
+      console.error(`Error processing potential matches for ${referenceNumber}:`, error);
+      return { success: false, error: error.message };
+    }
+  });
+
+// ---------- UTILITY ENDPOINT FUNCTIONS ---------- //
+
+/**
+ * Endpoint to check the status of a lost item report
+ */
+exports.checkLostItemStatus = functions.https.onRequest(async (req, res) => {
+  try {
+    const { referenceNumber, phone } = req.query;
+    
+    if (!referenceNumber) {
+      return res.status(400).json({ error: 'Reference number is required' });
+    }
+    
+    // Query the database for the report
+    const lostItemsRef = admin.database().ref('lostItems');
+    const snapshot = await lostItemsRef.orderByChild('referenceNumber').equalTo(referenceNumber).once('value');
+    const reportData = snapshot.val();
+    
+    if (!reportData) {
+      return res.status(404).json({ error: 'Report not found' });
+    }
+    
+    // Convert from object to array
+    const report = Object.values(reportData)[0];
+    
+    // If phone is provided, verify it matches the report
+    if (phone && report.phone !== phone) {
+      return res.status(403).json({ error: 'Phone number does not match report' });
+    }
+    
+    // Return status information
+    return res.status(200).json({
+      referenceNumber: report.referenceNumber,
+      status: report.status,
+      reportDate: report.reportDate,
+      lastUpdated: report.lastUpdated || report.reportDate,
+      potentialMatchCount: report.potentialMatches?.length || 0
+    });
+    
+  } catch (error) {
+    console.error('Error checking report status:', error);
+    return res.status(500).json({ error: 'Server error' });
+  }
+});
+
+/**
+ * Health check endpoint to verify all services are operational
+ */
+exports.healthCheck = functions.https.onRequest((req, res) => {
+  res.status(200).json({
+    status: 'OK',
+    timestamp: Date.now(),
+    services: {
+      firebase: true,
+      twilio: !!twilioClient,
+      openai: !!openai,
+      vision: !!vision
+    },
+    environment: {
+      twilio_configured: !!process.env.TWILIO_ACCOUNT_SID && !!process.env.TWILIO_AUTH_TOKEN,
+      openai_configured: !!process.env.OPENAI_API_KEY
+    }
+  });
+});
+
+/**
+ * Export all functions
+ */
+module.exports = {
+  whatsappWebhook: exports.whatsappWebhook,
+  analyzeStorageImage: exports.analyzeStorageImage,
+  processPotentialMatches: exports.processPotentialMatches,
+  checkLostItemStatus: exports.checkLostItemStatus,
+  healthCheck: exports.healthCheck
+};

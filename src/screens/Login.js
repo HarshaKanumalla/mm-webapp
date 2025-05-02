@@ -1,148 +1,77 @@
 import React, { useState, useCallback, useEffect, useRef } from 'react';
 import { signInWithEmailAndPassword } from 'firebase/auth';
 import { auth } from '../firebase';
-import mmlogo from '../screens/mmlogo.png';
-
-// Import SVG icons - adjust paths as needed for your project
-import { ReactComponent as TennisBallIcon } from '../screens/ball.svg';
-import { ReactComponent as TeddyBearIcon } from '../screens/bear.svg';
-import { ReactComponent as HelmetIcon } from '../screens/helmet.svg';
-import { ReactComponent as FlashlightIcon } from '../screens/flashlight.svg';
-import { ReactComponent as BatteryIcon } from '../screens/drum.svg';
-import { ReactComponent as SuitcaseIcon } from '../screens/suitcase.svg';
-import { ReactComponent as SpeakerIcon } from '../screens/speaker.svg';
-import { ReactComponent as RacketIcon } from '../screens/racket.svg';
-import { ReactComponent as HeadphonesIcon } from '../screens/headphones.svg';
-import { ReactComponent as ControllerIcon } from '../screens/controller.svg';
-import { ReactComponent as BottleIcon } from '../screens/bottle.svg';
-import { ReactComponent as LaptopIcon } from '../screens/laptop.svg';
-import { ReactComponent as WalletIcon } from '../screens/wallet.svg';
-import { ReactComponent as KeyIcon } from '../screens/key.svg';
-import { ReactComponent as CapIcon } from '../screens/cap.svg';
-import { ReactComponent as PassportIcon } from '../screens/passport.svg';
-import { ReactComponent as UmbrellaIcon } from '../screens/umbrella.svg';
-import { ReactComponent as GlassesIcon } from '../screens/glasses.svg';
-import { ReactComponent as DumbbellIcon } from '../screens/dumbbell.svg';
-import { ReactComponent as MedkitIcon } from '../screens/medkit.svg';
-import { ReactComponent as BabyBottleIcon } from '../screens/baby-bottle.svg';
 
 const ADMIN_EMAIL = 'missingsmartbox@gmail.com';
 
-// Available icons array for animation
-const ICONS = [
-  TennisBallIcon, TeddyBearIcon, HelmetIcon, FlashlightIcon, BatteryIcon,
-  SuitcaseIcon, SpeakerIcon, RacketIcon, HeadphonesIcon, ControllerIcon,
-  BottleIcon, LaptopIcon, WalletIcon, KeyIcon, CapIcon,
-  PassportIcon, UmbrellaIcon, GlassesIcon, DumbbellIcon, MedkitIcon, BabyBottleIcon
-];
+// Wallet icon
+const WalletIcon = () => (
+  <svg viewBox="0 0 100 100" xmlns="http://www.w3.org/2000/svg">
+    <rect x="5" y="15" width="90" height="70" rx="15" fill="#1E3B2E" />
+    <rect x="15" y="30" width="25" height="45" rx="2" fill="#1E3B2E" stroke="#A9BE7B" strokeWidth="4" />
+    <circle cx="27" cy="55" r="8" fill="#A9BE7B" />
+  </svg>
+);
 
-/**
- * Form input component
- */
-const FormInput = React.memo(({ type, name, placeholder, value, onChange, inputRef }) => (
-  <input
-    ref={inputRef}
-    type={type}
-    name={name}
-    placeholder={placeholder.toUpperCase()}
-    value={value}
-    onChange={onChange}
-    className="w-4/5 mx-auto h-10 px-4 rounded-full border border-gray-300 text-gray-600 text-center text-xs
-              font-['Montserrat'] placeholder:font-['Montserrat'] placeholder:text-gray-400 placeholder:uppercase placeholder:text-xs
-              focus:outline-none focus:ring-1 focus:ring-[#2A9D8E] 
-              transition-all duration-200 bg-white shadow-inner"
-    required
-    aria-invalid={name === 'email' && value !== '' && value !== ADMIN_EMAIL}
-  />
-));
+// Key icon
+const KeyIcon = () => (
+  <svg viewBox="0 0 100 100" xmlns="http://www.w3.org/2000/svg">
+    <path d="M35,60 L70,40 L80,50 L70,60 L70,75 L60,75 L60,65 L50,65 L50,75 L40,75 L40,60 Z" fill="#F0D777" />
+    <circle cx="35" cy="60" r="20" fill="#F0D777" />
+    <circle cx="35" cy="60" r="10" fill="#5E8549" />
+  </svg>
+);
 
-/**
- * Login button component
- */
-const LoginButton = React.memo(({ isLoading }) => (
-  <button
-    type="submit"
-    disabled={isLoading}
-    className="w-2/4 mx-auto h-10 bg-[#2A9D8E] rounded-full text-white font-medium uppercase flex items-center justify-center text-xs
-              disabled:opacity-50 disabled:cursor-not-allowed focus:outline-none focus:ring-2 focus:ring-[#2A9D8E] shadow-md hover:shadow-lg transition-shadow duration-300"
-    aria-label="Login"
-  >
-    {isLoading ? (
-      <div className="flex items-center justify-center">
-        <div className="w-5 h-5 border-2 border-t-2 border-white border-t-transparent rounded-full animate-spin"></div>
-        <span className="ml-2">Logging in...</span>
-      </div>
-    ) : (
-      <div className="flex items-center justify-center">
-        <span>LOGIN</span>
-        <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5 ml-2" viewBox="0 0 20 20" fill="currentColor">
-          <path fillRule="evenodd" d="M5 9V7a5 5 0 0110 0v2a2 2 0 012 2v5a2 2 0 01-2 2H5a2 2 0 01-2-2v-5a2 2 0 012-2zm8-2v2H7V7a3 3 0 016 0z" clipRule="evenodd" />
-        </svg>
-      </div>
-    )}
-  </button>
-));
+// Bottle icon
+const BottleIcon = () => (
+  <svg viewBox="0 0 100 100" xmlns="http://www.w3.org/2000/svg">
+    <path d="M40,25 L60,25 L60,40 C70,45 75,55 75,70 L75,85 C75,90 70,95 65,95 L35,95 C30,95 25,90 25,85 L25,70 C25,55 30,45 40,40 L40,25 Z" fill="#78BDB3" />
+    <path d="M40,25 L60,25 L60,40 C70,45 75,55 75,70 L75,75 C55,75 45,75 25,75 L25,70 C25,55 30,45 40,40 L40,25 Z" fill="#A3D2CA" />
+    <rect x="40" y="15" width="20" height="10" rx="2" fill="#1E3B2E" />
+  </svg>
+);
 
-/**
- * Stacking Icon component - modified to stop and stack at bottom
- */
-const StackingIcon = ({ Icon, delay, duration, positionX, zIndex, size, isLargeIcon }) => {
-  // Calculate a random starting position off-screen (above viewport)
-  const startPosition = -100 - Math.random() * 500; // -100px to -600px
-  
-  // Create a unique animation name for this icon
-  // This prevents icons from having the exact same animation timing
-  const animationName = `fallAndStack_${Math.floor(Math.random() * 1000)}`;
-  
-  // Increase size by 25% for selected icons
-  const actualSize = isLargeIcon ? size * 1.25 : size;
-  
-  // Calculate final position at the bottom of the screen
-  // Use 95-98vh to ensure icons stop at the very bottom
-  const bottomPosition = 95 + Math.random() * 3; // 95-98vh
-  
-  // Define the keyframes for this specific icon
-  const keyframes = `
-    @keyframes ${animationName} {
-      0% {
-        transform: translateY(0) rotate(0deg);
-        opacity: 0.8;
-      }
-      70% {
-        opacity: 0.8;
-      }
-      100% {
-        transform: translateY(${bottomPosition}vh) rotate(${Math.random() > 0.5 ? '' : '-'}${Math.floor(Math.random() * 360)}deg);
-        opacity: 0.8;
-      }
-    }
-  `;
-  
-  return (
-    <>
-      <style>{keyframes}</style>
-      <div
-        className="absolute"
-        style={{
-          left: `${positionX}%`,
-          top: `${startPosition}px`, // Start above the viewport
-          zIndex,
-          opacity: 0.8,
-          animation: `${animationName} ${duration}s ease-in ${delay}s forwards`,
-          transformOrigin: 'center',
-          width: `${actualSize}px`,
-          height: `${actualSize}px`
-        }}
-      >
-        <Icon className="w-full h-full text-[#2A9D8E]" />
-      </div>
-    </>
-  );
-};
+// Glasses icon
+const GlassesIcon = () => (
+  <svg viewBox="0 0 100 100" xmlns="http://www.w3.org/2000/svg">
+    <path d="M15,45 C15,35 25,35 35,35 L65,35 C75,35 85,35 85,45 L80,55 C80,65 70,65 60,65 C50,65 50,55 50,55 C50,55 50,55 50,55 C50,55 50,55 50,55 C50,55 40,65 30,65 C20,65 20,55 20,55 L15,45 Z" stroke="#1E3B2E" strokeWidth="6" fill="none" />
+  </svg>
+);
 
-/**
- * Login component with stacking icons animation
- */
+// Notebook icon
+const NotebookIcon = () => (
+  <svg viewBox="0 0 100 100" xmlns="http://www.w3.org/2000/svg">
+    <rect x="30" y="20" width="40" height="60" rx="3" fill="#1E3B2E" />
+    <line x1="35" y1="35" x2="65" y2="35" stroke="#A9BE7B" strokeWidth="3" />
+    <line x1="35" y1="45" x2="65" y2="45" stroke="#A9BE7B" strokeWidth="3" />
+    <line x1="35" y1="55" x2="65" y2="55" stroke="#A9BE7B" strokeWidth="3" />
+    <line x1="35" y1="65" x2="65" y2="65" stroke="#A9BE7B" strokeWidth="3" />
+  </svg>
+);
+
+// Striped helmet icon
+const HelmetIcon = () => (
+  <svg viewBox="0 0 100 100" xmlns="http://www.w3.org/2000/svg">
+    <path d="M25,65 C25,40 40,35 50,35 C60,35 75,40 75,65 C75,75 70,80 65,80 L35,80 C30,80 25,75 25,65 Z" fill="#1E3B2E" />
+    <line x1="30" y1="40" x2="30" y2="75" stroke="#A9BE7B" strokeWidth="5" />
+    <line x1="40" y1="37" x2="40" y2="77" stroke="#A9BE7B" strokeWidth="5" />
+    <line x1="50" y1="35" x2="50" y2="80" stroke="#A9BE7B" strokeWidth="5" />
+    <line x1="60" y1="37" x2="60" y2="77" stroke="#A9BE7B" strokeWidth="5" />
+    <line x1="70" y1="40" x2="70" y2="75" stroke="#A9BE7B" strokeWidth="5" />
+  </svg>
+);
+
+// Signpost icon
+const SignpostIcon = () => (
+  <svg viewBox="0 0 100 100" xmlns="http://www.w3.org/2000/svg">
+    <rect x="45" y="20" width="10" height="70" fill="#1E3B2E" />
+    <rect x="25" y="60" width="50" height="25" rx="2" fill="#1E3B2E" />
+    <line x1="30" y1="65" x2="70" y2="65" stroke="#A9BE7B" strokeWidth="3" />
+    <line x1="30" y1="72" x2="70" y2="72" stroke="#A9BE7B" strokeWidth="3" />
+    <line x1="30" y1="79" x2="70" y2="79" stroke="#A9BE7B" strokeWidth="3" />
+  </svg>
+);
+
 const Login = ({ onLogin }) => {
   const [formData, setFormData] = useState({
     email: '',
@@ -152,46 +81,6 @@ const Login = ({ onLogin }) => {
   const [isLoading, setIsLoading] = useState(false);
   const emailInputRef = useRef(null);
   
-  // Generate stacking icons with varied sizes covering the full screen width
-  const stackingIcons = useRef(Array.from({ length: 70 }, (_, index) => {
-    const IconComponent = ICONS[index % ICONS.length];
-    
-    // Create three distinct size categories for better variation
-    let size;
-    const sizeCategory = index % 3;
-    if (sizeCategory === 0) {
-      // Small icons
-      size = 16 + Math.floor(Math.random() * 10); // 16-25px
-    } else if (sizeCategory === 1) {
-      // Medium icons
-      size = 26 + Math.floor(Math.random() * 10); // 26-35px
-    } else {
-      // Large icons
-      size = 36 + Math.floor(Math.random() * 15); // 36-50px
-    }
-    
-    // Create a more staggered delay pattern for better distribution
-    // Use a different formula to ensure icons don't all arrive at the same time
-    const delay = (index * 0.3) % 6; // Staggered delays from 0-5.7s
-    
-    // Distribute icons across the full screen width (0-100%)
-    const positionX = Math.random() * 100; 
-    
-    // Make approximately 25% of the icons larger (every 4th icon)
-    const isLargeIcon = index % 4 === 0;
-    
-    return {
-      Icon: IconComponent,
-      positionX: positionX,
-      delay: delay,
-      // Vary duration more to create natural-looking stacking
-      duration: 4 + Math.random() * 4, // 4-8s duration
-      zIndex: 10 + (index % 20), // Different z-indices for stacking effect
-      size: size, // Varied sizing based on category
-      isLargeIcon: isLargeIcon // Flag to indicate icons that should be 25% larger
-    };
-  })).current;
-
   // Focus email input on component mount
   useEffect(() => {
     if (emailInputRef.current) {
@@ -238,65 +127,111 @@ const Login = ({ onLogin }) => {
     }
   };
 
+  // Background color constant for reuse
+  const bgColor = "#F8F7F0";
+
   return (
-    <div className="min-h-screen w-full relative overflow-hidden bg-[#222222]">
-      {/* Stacking icons container */}
-      <div className="absolute inset-0 z-10 overflow-hidden">
-        <div className="absolute inset-0" style={{ pointerEvents: 'none' }}>
-          {stackingIcons.map((config, index) => (
-            <StackingIcon
-              key={index}
-              Icon={config.Icon}
-              delay={config.delay}
-              duration={config.duration}
-              positionX={config.positionX}
-              zIndex={config.zIndex}
-              size={config.size}
-              isLargeIcon={config.isLargeIcon}
-            />
-          ))}
+    <div className="h-screen w-full flex overflow-hidden">
+      {/* Left side grid */}
+      <div className="w-1/2 grid grid-cols-3 grid-rows-3 relative">
+        {/* Row 1 */}
+        <div className="bg-[#A9BE7B] flex items-center justify-center">
+          <div className="w-3/4 h-3/4"><WalletIcon /></div>
+        </div>
+        <div className="bg-[#5E8549] flex items-center justify-center">
+          <div className="w-3/4 h-3/4"><KeyIcon /></div>
+        </div>
+        <div className="bg-[#A9BE7B] relative overflow-hidden">
+          <div className="absolute inset-0 flex items-center justify-center z-10">
+            <div className="w-2/3 h-2/3"><BottleIcon /></div>
+          </div>
+          <div className="absolute top-0 right-0 w-full h-full">
+            <svg viewBox="0 0 100 100" preserveAspectRatio="none">
+              <path d="M0,0 L100,0 L100,100 L0,0 Z" fill="#5E8549" />
+            </svg>
+          </div>
+        </div>
+        
+        {/* Row 2 */}
+        <div className="bg-[#5E8549] flex items-center justify-center">
+          <div className="w-3/4 h-3/4"><GlassesIcon /></div>
+        </div>
+        <div className="bg-[#A9BE7B] flex items-center justify-center">
+          <div className="w-3/4 h-3/4"><NotebookIcon /></div>
+        </div>
+        <div className="bg-[#5E8549] flex items-center justify-center">
+          <div className="w-3/4 h-3/4"><HelmetIcon /></div>
+        </div>
+        
+        {/* Row 3 */}
+        <div className="bg-[#A9BE7B] flex items-center justify-center">
+          <div className="w-3/4 h-3/4"><SignpostIcon /></div>
+        </div>
+        <div className="bg-[#5E8549] relative overflow-hidden">
+          <div className="absolute top-0 left-0 w-full h-full">
+            <svg viewBox="0 0 100 100" preserveAspectRatio="none">
+              <path d="M0,100 L100,100 L0,0 Z" fill="#A9BE7B" />
+            </svg>
+          </div>
+        </div>
+        
+        {/* This cell will be visually removed and replaced with the curved mask */}
+        <div className="bg-[#A9BE7B]"></div>
+        
+        {/* Curved corner overlay that matches the right side background */}
+        <div 
+          className="absolute bottom-0 right-0 w-1/3 h-1/3 overflow-hidden" 
+          style={{ backgroundColor: bgColor }}
+        >
+          <div 
+            className="absolute bottom-0 right-0 w-[200%] h-[200%] rounded-tl-[200px]" 
+            style={{ backgroundColor: bgColor }}
+          ></div>
         </div>
       </div>
       
-      {/* Main login card */}
-      <div className="absolute inset-0 flex items-center justify-center p-4 z-20">
-        <div className="bg-white rounded-3xl shadow-xl w-[23%] max-w-sm mx-auto p-6 drop-shadow-2xl">
-          <div className="flex flex-col items-center mb-6">
-            <div className="w-20 h-20 rounded-full border-2 border-[#FFFFFF] flex items-center justify-center mb-2 shadow-lg">
-              <img 
-                src={mmlogo} 
-                alt="Missing Matters Logo" 
-                className="w-14 h-14 object-contain" 
-              />
-            </div>
+      {/* Right side content */}
+      <div className="w-1/2" style={{ backgroundColor: bgColor }}>
+        <div className="h-full flex flex-col items-center justify-center">
+          <div className="mb-8">
+            <h1 className="text-5xl font-bold text-[#24503B]">Missing</h1>
+            <h1 className="text-5xl font-bold text-[#24503B] mb-2">Matters</h1>
+            <p className="text-2xl text-[#24503B]">Find what you've lost</p>
           </div>
           
           <form 
             onSubmit={handleLogin}
-            className="flex flex-col w-full mx-auto gap-4"
+            className="flex flex-col items-center space-y-6 w-full"
             noValidate
-            aria-label="Login form"
           >
-            <FormInput
+            <input
+              ref={emailInputRef}
               type="email"
               name="email"
-              placeholder="Username or Email ID"
+              placeholder="Email Address"
               value={formData.email}
               onChange={handleInputChange}
-              inputRef={emailInputRef}
+              className="w-2/5 h-12 px-4 rounded-lg border border-gray-300
+                        text-gray-600 placeholder:text-gray-400 focus:outline-none
+                        text-center bg-transparent"
+              required
             />
             
-            <FormInput
+            <input
               type="password"
               name="password"
               placeholder="Enter Password"
               value={formData.password}
               onChange={handleInputChange}
+              className="w-2/5 h-12 px-4 rounded-lg border border-gray-300
+                        text-gray-600 placeholder:text-gray-400 focus:outline-none
+                        text-center bg-transparent"
+              required
             />
 
             {error && (
               <div 
-                className="bg-red-50 border border-red-200 text-red-700 px-4 py-2 rounded-lg text-sm w-3/4 mx-auto"
+                className="w-2/5 bg-red-50 border border-red-200 text-red-700 px-3 py-2 rounded-lg text-sm"
                 role="alert"
                 aria-live="assertive"
               >
@@ -304,9 +239,22 @@ const Login = ({ onLogin }) => {
               </div>
             )}
 
-            <div className="mt-4 w-full flex justify-center">
-              <LoginButton isLoading={isLoading} />
-            </div>
+            <button
+              type="submit"
+              disabled={isLoading}
+              className="mt-4 px-10 py-3 bg-[#2A5D3E] rounded-lg text-white font-medium
+                        disabled:opacity-50 disabled:cursor-not-allowed"
+              aria-label="Login"
+            >
+              {isLoading ? (
+                <div className="flex items-center justify-center">
+                  <div className="w-4 h-4 border-2 border-t-2 border-white border-t-transparent rounded-full animate-spin"></div>
+                  <span className="ml-2">Logging in...</span>
+                </div>
+              ) : (
+                "LOGIN"
+              )}
+            </button>
           </form>
         </div>
       </div>
