@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { getAuth, signOut } from 'firebase/auth';
-import { ref, listAll, uploadBytes, getDownloadURL, deleteObject, getBlob } from 'firebase/storage';
+import { ref, listAll, uploadBytes, getDownloadURL, deleteObject, getBytes } from 'firebase/storage';
 import { storage } from '../firebase';
 
 // Import icons and images
@@ -554,7 +554,7 @@ export const AdsScreen = () => {
     }
   };
 
-  // Handle the "Update" button click - UPDATED with getBlob
+  // UPDATED: Handle the "Update" button click with CORS fix
   const handleUpdateChanges = async () => {
     if (!pendingChanges) {
       alert("No changes to update");
@@ -565,29 +565,71 @@ export const AdsScreen = () => {
       // Process pending uploads
       for (const task of pendingUploadTasks) {
         const { fileName, box } = task;
-        const file = uploadedFiles.find(f => f.name === fileName);
-        if (!file) continue;
         
-        const boxFolderPath = `missingmatters_videos/${box}/`;
-        const boxFileRef = ref(storage, `${boxFolderPath}${fileName}`);
-        
-        // Use Firebase Storage SDK instead of fetch
-        const sourceRef = ref(storage, `missingmatters_videos/${fileName}`);
-        const blob = await getBlob(sourceRef);
-        await uploadBytes(boxFileRef, blob);
-        
-        // Add notification
-        addNotification(`Ad "${fileName}" has been uploaded to box ${box}`);
+        try {
+          // Get the file data using getBytes (avoids CORS issues)
+          const sourceRef = ref(storage, `missingmatters_videos/${fileName}`);
+          const bytes = await getBytes(sourceRef);
+          
+          // Upload to destination box
+          const destinationRef = ref(storage, `missingmatters_videos/${box}/${fileName}`);
+          await uploadBytes(destinationRef, bytes);
+          
+          // Add notification
+          addNotification(`Ad "${fileName}" has been uploaded to box ${box}`);
+        } catch (error) {
+          console.error(`Error copying file ${fileName} to box ${box}:`, error);
+          
+          // Try alternative method with direct metadata copy
+          try {
+            console.log(`Trying alternative method for ${fileName}`);
+            
+            // Create a temporary file from the original
+            const file = uploadedFiles.find(f => f.name === fileName);
+            if (!file) throw new Error("File not found in uploaded files");
+            
+            // Create destination reference
+            const destinationRef = ref(storage, `missingmatters_videos/${box}/${fileName}`);
+            
+            // Use uploadString with data URL if file URL is available
+            if (file.url) {
+              // Extract file extension
+              const fileExt = fileName.split('.').pop().toLowerCase();
+              const metadata = {
+                contentType: fileExt === 'png' ? 'image/png' : 
+                             fileExt === 'jpg' || fileExt === 'jpeg' ? 'image/jpeg' :
+                             fileExt === 'mp4' ? 'video/mp4' : 'application/octet-stream'
+              };
+              
+              // Re-upload the file directly to the box
+              const sourceRef = ref(storage, `missingmatters_videos/${fileName}`);
+              const bytes = await getBytes(sourceRef);
+              await uploadBytes(destinationRef, bytes, metadata);
+              
+              addNotification(`Ad "${fileName}" has been uploaded to box ${box} (alt method)`);
+            } else {
+              throw new Error("File URL not available");
+            }
+          } catch (altError) {
+            console.error(`Alternative method failed for ${fileName}:`, altError);
+            addNotification(`Failed to upload ad "${fileName}" to box ${box}. Error: ${error.message}`);
+          }
+        }
       }
       
       // Process pending removals
       for (const task of pendingRemovalTasks) {
         const { fileName, box } = task;
-        const fileRef = ref(storage, `missingmatters_videos/${box}/${fileName}`);
-        await deleteObject(fileRef);
-        
-        // Add notification
-        addNotification(`Ad "${fileName}" has been removed from box ${box}`);
+        try {
+          const fileRef = ref(storage, `missingmatters_videos/${box}/${fileName}`);
+          await deleteObject(fileRef);
+          
+          // Add notification
+          addNotification(`Ad "${fileName}" has been removed from box ${box}`);
+        } catch (error) {
+          console.error(`Error removing file ${fileName} from box ${box}:`, error);
+          addNotification(`Failed to remove ad "${fileName}" from box ${box}`);
+        }
       }
       
       // Refresh all box contents
@@ -599,23 +641,32 @@ export const AdsScreen = () => {
       const updatedBoxFiles = { ...boxFiles };
       
       for (const box of affectedBoxes) {
-        const boxRef = ref(storage, `missingmatters_videos/${box}/`);
-        const boxContents = await listAll(boxRef);
-        
-        const files = await Promise.all(
-          boxContents.items.map(async (itemRef) => {
-            const url = await getDownloadURL(itemRef);
-            const fileType = itemRef.name.split('.').pop().toLowerCase();
-            return { 
-              name: itemRef.name, 
-              url,
-              type: `${fileType.startsWith('mp') ? 'video' : 'image'}/${fileType}`,
-              isVideo: fileType.startsWith('mp')
-            };
-          })
-        );
-        
-        updatedBoxFiles[box] = files;
+        try {
+          const boxRef = ref(storage, `missingmatters_videos/${box}/`);
+          const boxContents = await listAll(boxRef);
+          
+          const files = await Promise.all(
+            boxContents.items.map(async (itemRef) => {
+              try {
+                const url = await getDownloadURL(itemRef);
+                const fileType = itemRef.name.split('.').pop().toLowerCase();
+                return { 
+                  name: itemRef.name, 
+                  url,
+                  type: `${fileType.startsWith('mp') ? 'video' : 'image'}/${fileType}`,
+                  isVideo: fileType.startsWith('mp')
+                };
+              } catch (error) {
+                console.error(`Error getting download URL for ${itemRef.name}:`, error);
+                return null;
+              }
+            })
+          );
+          
+          updatedBoxFiles[box] = files.filter(Boolean);
+        } catch (error) {
+          console.error(`Error refreshing box ${box}:`, error);
+        }
       }
       
       setBoxFiles(updatedBoxFiles);
