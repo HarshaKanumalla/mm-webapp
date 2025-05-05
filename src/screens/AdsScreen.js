@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { getAuth, signOut } from 'firebase/auth';
-import { ref, listAll, uploadBytes, getDownloadURL, deleteObject } from 'firebase/storage';
+import { ref, listAll, uploadBytes, getDownloadURL, deleteObject, getBlob } from 'firebase/storage';
 import { storage } from '../firebase';
 
 // Import icons and images
@@ -554,7 +554,7 @@ export const AdsScreen = () => {
     }
   };
 
-  // Handle the "Update" button click
+  // Handle the "Update" button click - UPDATED with getBlob
   const handleUpdateChanges = async () => {
     if (!pendingChanges) {
       alert("No changes to update");
@@ -570,8 +570,10 @@ export const AdsScreen = () => {
         
         const boxFolderPath = `missingmatters_videos/${box}/`;
         const boxFileRef = ref(storage, `${boxFolderPath}${fileName}`);
-        const response = await fetch(file.url);
-        const blob = await response.blob();
+        
+        // Use Firebase Storage SDK instead of fetch
+        const sourceRef = ref(storage, `missingmatters_videos/${fileName}`);
+        const blob = await getBlob(sourceRef);
         await uploadBytes(boxFileRef, blob);
         
         // Add notification
